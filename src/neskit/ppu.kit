@@ -1,0 +1,77 @@
+struct Ppu {
+    public static function new() {
+        return struct Ppu {};
+    }
+
+    public var frameCount: Size = 1;
+    public var stolenCycles: Size = 0;
+    public var finished: Bool = false;
+
+    public var oam: CArray[Uint8, 0x100] = empty;
+    public var nameTables: CArray[Uint8, 4] = empty;
+    public var pal: CArray[Uint8, 32] = empty;
+
+    public var scanline: Uint8 = 0;
+    public var cycles: Int = 1;
+
+    var vramAddr: Int = 0;
+    var vramAddrTemp: Int = 0;
+    var xScroll: Int = 0;
+    var even = true;
+
+    var bgPatternAddr = 0x1000;
+    var sprPatternAddr = 0;
+
+    var oamAddr: Int = 0;
+
+    var bgShiftRegH: Int = 0;
+    var bgShiftRegL: Int = 0;
+    var bgAttrShiftRegH: Int = 0;
+    var bgAttrShiftRegL: Int = 0;
+    // $2000 PPUCTRL registers
+    var nmiEnabled: Bool = false;
+    var ntAddr: Int = 0;
+    var vramInc: Int = 1;
+    var tallSprites: Bool = false;
+    // $2001 PPUMASK registers
+    var greyscale: Bool = false;
+    var bgClip: Bool = false;
+    var sprClip: Bool = false;
+    var bgRender: Bool = false;
+    var sprRender: Bool = false;
+    var emph: Int = 0;
+    // $2002 PPUSTATUS registers
+    var spriteOverflow: Bool = false;
+    var sprite0: Bool = false;
+    var vblank: Bool = false;
+
+    var spriteBgFlags: CArray[Bool, 8] = empty;
+    var spriteShiftRegH: CArray[Int, 8] = empty;
+    var spriteShiftRegL: CArray[Int, 8] = empty;
+    var spriteXlatch: CArray[Int, 8] = empty;
+    var spritepals: CArray[Int, 8] = empty;
+    var openBus: Int = 0;
+    var openBusDecayH: Int = 0;
+    var openBusDecayL: Int = 0;
+    var readBuffer: Int = 0;
+    var tileAddr: Int = 0;
+    var tileL: Int = 0;
+    var tileH: Int = 0;
+    var attr: Int = 0;
+    var attrH: Int = 0;
+    var attrL: Int = 0;
+
+    var off: Int = 0;
+    var index: Int = 0;
+    var sprpxl: Int = 0;
+    var found: Int = 0;
+    var sprite0here: Bool = false;
+    var suppress: Bool = false;
+
+    public function isEnabled()
+    {
+        return this.bgRender || this.sprRender;
+    }
+
+    public function catchUp() {}
+}

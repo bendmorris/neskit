@@ -1,0 +1,1727 @@
+import neskit.addressing;
+import neskit.nes;
+import neskit.opcode;
+
+struct Cpu {
+    public var cycles: Size = 0;
+    public var apuCycles: Size = 0;
+    public var ticks: Size = 0;
+    public var cycleCount: Size = 0;
+    public var nmi: Bool = false;
+    public var pc: Uint16 = 0x8000;
+    public var dma: Uint8 = 0;
+    public var interrupt: Uint8 = 0;
+
+    var nmiQueued: Bool = false;
+    var prevNmi: Bool = false;
+    var sp: Uint8 = 0xfd;           // stack pointer
+    var a: Uint8 = 0;               // accumulator
+    var x: Uint8 = 0;               // x register
+    var y: Uint8 = 0;               // y register
+
+    var cf: Bool = false;           // carry
+    var zf: Bool = false;           // zero
+    var id: Bool = false;           // interrupt disable
+    var dm: Bool = false;           // decimal mode
+    var bc: Bool = false;           // break command
+    var uf: Bool = false;           // unused flag
+    var of: Bool = false;           // overflow
+    var nf: Bool = false;           // negative
+
+    var interruptDelay: Bool = false;
+    var prevIntFlag: Bool = false;
+
+    var address: Uint16 = 0;
+
+    public static function new() {
+        return struct Cpu {};
+    }
+
+    public function suppressNmi() {
+        this.nmiQueued = false;
+        if this.nmi {
+            this.prevNmi = true;
+        }
+    }
+
+    public function runFrame(nes: Ptr[Nes]) using implicit nes {
+        var ppu = nes.ppu;
+        ppu.stolenCycles = 0;
+        while (!ppu.finished) {
+            this.runCycle();
+
+            var projScanline = (ppu.scanline + (ppu.cycles + (this.cycles * 3)) / 340) as Uint8;
+            if projScanline > ppu.scanline || projScanline == 241 {
+                // yield control to the the PPU to catch up to this clock; this
+                // happens when the PPU has been modified or at end of each scanline
+                ppu.catchUp();
+            }
+        }
+        ppu.finished = false;
+    }
+
+    /**
+     * Run a single instruction.
+     */
+    public function runCycle(nes: Ptr[Nes]) using implicit nes {
+        this.ticks = 0;
+
+        if nes.ram.dmaCounter > 0 && --nes.ram.dmaCounter == 0 {
+            // account for CPU cycles from DMA
+            this.addTicks(513);
+            nes.ppu.catchUp();
+        }
+
+        var nmiFrame: Bool = false;
+
+        if this.nmiQueued {
+            this.doNmi();
+            this.nmiQueued = false;
+            nmiFrame = true;
+        }
+        if this.nmi && !this.prevNmi {
+            this.nmiQueued = true;
+        }
+        this.prevNmi = this.nmi;
+
+        if this.interrupt > 0 && (!this.id && !this.interruptDelay) {
+            this.doInterrupt();
+            this.addTicks(7);
+        } else if (this.interrupt > 0 && this.interruptDelay) {
+            this.interruptDelay = false;
+            if !this.prevIntFlag {
+                this.doInterrupt();
+                this.addTicks(7);
+            }
+        } else {
+            this.interruptDelay = false;
+
+            var byte = this.readpc() as Uint8;
+
+            // previously these used a bit more abstraction, but the opcode
+            // dispatch table has been completely inlined for efficiency
+            // var code: OpCode = OpCode.getCode(byte);
+            // var mode: AddressingMode = OpCode.getAddressingMode(byte);
+            var value: Uint8;
+
+            // execute instruction
+            if byte == 0x01 {
+                // ORA
+                this.ticks += 6;
+                this.ora(this.read(this.inx()));
+            }
+            else if byte == 0x05 {
+                // ORA
+                this.ticks += 3;
+                this.ora(this.read(this.zpg()));
+            }
+            else if byte == 0x09 {
+                // ORA
+                this.ticks += 2;
+                this.ora(this.imm());
+            }
+            else if byte == 0x0d {
+                // ORA
+                this.ticks += 4;
+                this.ora(this.read(this.abs()));
+            }
+            else if byte == 0x11 {
+                // ORA
+                this.ticks += 5;
+                this.ora(this.read(this.inyPb()));
+            }
+            else if byte == 0x15 {
+                // ORA
+                this.ticks += 4;
+                this.ora(this.read(this.zpx()));
+            }
+            else if byte == 0x19 {
+                // ORA
+                this.ticks += 4;
+                this.ora(this.read(this.abyPb()));
+            }
+            else if byte == 0x1d {
+                // ORA
+                this.ticks += 4;
+                this.ora(this.read(this.abxPb()));
+            }
+            else if byte == 0x21 {
+                // AND
+                this.ticks += 6;
+                this.and(this.read(this.inx()));
+            }
+            else if byte == 0x25 {
+                // AND
+                this.ticks += 3;
+                this.and(this.read(this.zpg()));
+            }
+            else if byte == 0x29 {
+                // AND
+                this.ticks += 2;
+                this.and(this.imm());
+            }
+            else if byte == 0x2d {
+                // AND
+                this.ticks += 4;
+                this.and(this.read(this.abs()));
+            }
+            else if byte == 0x31 {
+                // AND
+                this.ticks += 5;
+                this.and(this.read(this.inyPb()));
+            }
+            else if byte == 0x35 {
+                // AND
+                this.ticks += 4;
+                this.and(this.read(this.zpx()));
+            }
+            else if byte == 0x39 {
+                // AND
+                this.ticks += 4;
+                this.and(this.read(this.abyPb()));
+            }
+            else if byte == 0x3d {
+                // AND
+                this.ticks += 4;
+                this.and(this.read(this.abxPb()));
+            }
+            else if byte == 0x41 {
+                // EOR
+                this.ticks += 6;
+                this.eor(this.read(this.inx()));
+            }
+            else if byte == 0x45 {
+                // EOR
+                this.ticks += 3;
+                this.eor(this.read(this.zpg()));
+            }
+            else if byte == 0x49 {
+                // EOR
+                this.ticks += 2;
+                this.eor(this.imm());
+            }
+            else if byte == 0x4d {
+                // EOR
+                this.ticks += 4;
+                this.eor(this.read(this.abs()));
+            }
+            else if byte == 0x51 {
+                // EOR
+                this.ticks += 5;
+                this.eor(this.read(this.inyPb()));
+            }
+            else if byte == 0x55 {
+                // EOR
+                this.ticks += 4;
+                this.eor(this.read(this.zpx()));
+            }
+            else if byte == 0x59 {
+                // EOR
+                this.ticks += 4;
+                this.eor(this.read(this.abyPb()));
+            }
+            else if byte == 0x5d {
+                // EOR
+                this.ticks += 4;
+                this.eor(this.read(this.abxPb()));
+            }
+            else if byte == 0x61 {
+                // ADC
+                this.ticks += 6;
+                this.adc(this.read(this.inx()));
+            }
+            else if byte == 0x65 {
+                // ADC
+                this.ticks += 3;
+                this.adc(this.read(this.zpg()));
+            }
+            else if byte == 0x69 {
+                // ADC
+                this.ticks += 2;
+                this.adc(this.imm());
+            }
+            else if byte == 0x6d {
+                // ADC
+                this.ticks += 4;
+                this.adc(this.read(this.abs()));
+            }
+            else if byte == 0x71 {
+                // ADC
+                this.ticks += 5;
+                this.adc(this.read(this.inyPb()));
+            }
+            else if byte == 0x75 {
+                // ADC
+                this.ticks += 4;
+                this.adc(this.read(this.zpx()));
+            }
+            else if byte == 0x79 {
+                // ADC
+                this.ticks += 4;
+                this.adc(this.read(this.abyPb()));
+            }
+            else if byte == 0x7d {
+                // ADC
+                this.ticks += 4;
+                this.adc(this.read(this.abxPb()));
+            }
+            else if byte == 0x81 {
+                // STA
+                this.ticks += 6;
+                this.inx();
+                this.write(this.address, this.a);
+            }
+            else if byte == 0x85 {
+                // STA
+                this.ticks += 3;
+                this.zpg();
+                this.write(this.address, this.a);
+            }
+            else if byte == 0x8d {
+                // STA
+                this.ticks += 4;
+                this.abs();
+                this.write(this.address, this.a);
+            }
+            else if byte == 0x91 {
+                // STA
+                this.ticks += 6;
+                this.iny();
+                this.dummyRead(((this.address - this.y) & 0xff00) | (this.address & 0xff));
+                this.write(this.address, this.a);
+            }
+            else if byte == 0x95 {
+                // STA
+                this.ticks += 4;
+                this.zpx();
+                this.write(this.address, this.a);
+            }
+            else if byte == 0x99 {
+                // STA
+                this.ticks += 5;
+                this.aby();
+                this.write(this.address, this.a);
+            }
+            else if byte == 0x9d {
+                // STA
+                this.ticks += 5;
+                this.abx();
+                this.dummyRead(((this.address - this.x) & 0xff00) | (this.address & 0xff));
+                this.write(this.address, this.a);
+            }
+            else if byte == 0xa1 {
+                // LDA
+                this.ticks += 6;
+                this.a = this.read(this.inx());
+                this.setFlags(this.a);
+            }
+            else if byte == 0xa5 {
+                // LDA
+                this.ticks += 3;
+                this.a = this.read(this.zpg());
+                this.setFlags(this.a);
+            }
+            else if byte == 0xa9 {
+                // LDA
+                this.ticks += 2;
+                this.a = this.imm();
+                this.setFlags(this.a);
+            }
+            else if byte == 0xad {
+                // LDA
+                this.ticks += 4;
+                this.a = this.read(this.abs());
+                this.setFlags(this.a);
+            }
+            else if byte == 0xb1 {
+                // LDA
+                this.ticks += 5;
+                this.inyPb();
+                if this.address & 0xff00 != ((this.address - this.y) & 0xff00) {
+                    this.dummyRead(((this.address - this.y) & 0xff00) | (this.address & 0xff));
+                }
+                this.a = this.read(this.address);
+                this.setFlags(this.a);
+            }
+            else if byte == 0xb5 {
+                // LDA
+                this.ticks += 4;
+                this.a = this.read(this.zpx());
+                this.setFlags(this.a);
+            }
+            else if byte == 0xb9 {
+                // LDA
+                this.ticks += 4;
+                this.a = this.read(this.abyPb());
+                this.setFlags(this.a);
+            }
+            else if byte == 0xbd {
+                // LDA
+                this.ticks += 4;
+                this.abxPb();
+                if this.address & 0xff00 != ((this.address - this.x) & 0xff00) {
+                    this.dummyRead(((this.address - this.x) & 0xff00) | (this.address & 0xff));
+                }
+                this.a = this.read(this.address);
+                this.setFlags(this.a);
+            }
+            else if byte == 0x86 {
+                // STX
+                this.ticks += 3;
+                this.address = this.zpg();
+                this.write(this.address, this.x);
+            }
+            else if byte == 0x8e {
+                // STX
+                this.ticks += 4;
+                this.address = this.abs();
+                this.write(this.address, this.x);
+            }
+            else if byte == 0x96 {
+                // STX
+                this.ticks += 4;
+                this.address = this.zpy();
+                this.write(this.address, this.x);
+            }
+            else if byte == 0x84 {
+                // STY
+                this.ticks += 3;
+                this.address = this.zpg();
+                this.write(this.address, this.y);
+            }
+            else if byte == 0x8c {
+                // STY
+                this.ticks += 4;
+                this.address = this.abs();
+                this.write(this.address, this.y);
+            }
+            else if byte == 0x94 {
+                // STY
+                this.ticks += 4;
+                this.address = this.zpx();
+                this.write(this.address, this.y);
+            }
+            else if byte == 0x78 {
+                // SEI
+                this.ticks += 2;
+                this.delayInterrupt();
+                this.id = true;
+            }
+            else if byte == 0x58 {
+                // CEI
+                this.ticks += 2;
+                this.delayInterrupt();
+                this.id = false;
+            }
+            else if byte == 0xf8 {
+                this.ticks += 2;
+                this.dm = true;
+            }
+            else if byte == 0xd8 {
+                this.ticks += 2;
+                this.dm = false;
+            }
+            else if byte == 0x38 {
+                this.ticks += 2;
+                this.cf = true;
+            }
+            else if byte == 0x18 {
+                this.ticks += 2;
+                this.cf = false;
+            }
+            else if byte == 0xb8 {
+                this.ticks += 2;
+                this.of = false;
+            }
+            else if byte == 0x24 {
+                // BIT
+                this.ticks += 3;
+                value = this.read(this.zpg());
+                this.zf = value & this.a == 0;
+                this.of = value & 0x40 != 0;
+                this.nf = value & 0x80 != 0;
+            }
+            else if byte == 0x2c {
+                // BIT
+                this.ticks += 4;
+                value = this.read(this.abs());
+                this.zf = value & this.a == 0;
+                this.of = value & 0x40 != 0;
+                this.nf = value & 0x80 != 0;
+            }
+            else if byte == 0xc1 {
+                // CMP
+                this.ticks += 6;
+                value = this.read(this.inx());
+                this.cmp(this.a, value);
+            }
+            else if byte == 0xc5 {
+                // CMP
+                this.ticks += 3;
+                value = this.read(this.zpg());
+                this.cmp(this.a, value);
+            }
+            else if byte == 0xc9 {
+                // CMP
+                this.ticks += 2;
+                value = this.imm();
+                this.cmp(this.a, value);
+            }
+            else if byte == 0xcd {
+                // CMP
+                this.ticks += 4;
+                value = this.read(this.abs());
+                this.cmp(this.a, value);
+            }
+            else if byte == 0xd1 {
+                // CMP
+                this.ticks += 5;
+                value = this.read(this.inyPb());
+                this.cmp(this.a, value);
+            }
+            else if byte == 0xd5 {
+                // CMP
+                this.ticks += 4;
+                value = this.read(this.zpx());
+                this.cmp(this.a, value);
+            }
+            else if byte == 0xd9 {
+                // CMP
+                this.ticks += 4;
+                value = this.read(this.abyPb());
+                this.cmp(this.a, value);
+            }
+            else if byte == 0xdd {
+                // CMP
+                this.ticks += 4;
+                value = this.read(this.abxPb());
+                this.cmp(this.a, value);
+            }
+            else if byte == 0xe0 {
+                // CPX
+                this.ticks += 2;
+                value = this.imm();
+                this.cmp(this.x, value);
+            }
+            else if byte == 0xe4 {
+                // CPX
+                this.ticks += 3;
+                value = this.read(this.zpg());
+                this.cmp(this.x, value);
+            }
+            else if byte == 0xec {
+                // CPX
+                this.ticks += 4;
+                value = this.read(this.abs());
+                this.cmp(this.x, value);
+            }
+            else if byte == 0xc0 {
+                // CPY
+                this.ticks += 2;
+                value = this.imm();
+                this.cmp(this.y, value);
+            }
+            else if byte == 0xc4 {
+                // CPY
+                this.ticks += 3;
+                value = this.read(this.zpg());
+                this.cmp(this.y, value);
+            }
+            else if byte == 0xcc {
+                // CPY
+                this.ticks += 4;
+                value = this.read(this.abs());
+                this.cmp(this.y, value);
+            }
+            else if byte == 0xe1 {
+                // SBC
+                this.ticks += 6;
+                value = this.read(this.inx());
+                this.sbc(value);
+            }
+            else if byte == 0xe5 {
+                // SBC
+                this.ticks += 3;
+                value = this.read(this.zpg());
+                this.sbc(value);
+            }
+            else if byte == 0xe9 {
+                // SBC
+                this.ticks += 2;
+                value = this.imm();
+                this.sbc(value);
+            }
+            else if byte == 0xeb {
+                // SBC
+                this.ticks += 2;
+                value = this.imm();
+                this.sbc(value);
+            }
+            else if byte == 0xed {
+                // SBC
+                this.ticks += 4;
+                value = this.read(this.abs());
+                this.sbc(value);
+            }
+            else if byte == 0xf1 {
+                // SBC
+                this.ticks += 5;
+                value = this.read(this.inyPb());
+                this.sbc(value);
+            }
+            else if byte == 0xf5 {
+                // SBC
+                this.ticks += 4;
+                value = this.read(this.zpx());
+                this.sbc(value);
+            }
+            else if byte == 0xf9 {
+                // SBC
+                this.ticks += 4;
+                value = this.read(this.abyPb());
+                this.sbc(value);
+            }
+            else if byte == 0xfd {
+                // SBC
+                this.ticks += 4;
+                value = this.read(this.abxPb());
+                this.sbc(value);
+            }
+            else if byte == 0x20 {
+                // JSR
+                this.ticks += 6;
+                value = this.read(this.abs());
+                this.pushStack(this.pc - 1 >> 8);
+                this.pushStack((this.pc - 1) & 0xff);
+                this.pc = this.address;
+            }
+            else if byte == 0x60 {
+                // RTS
+                this.ticks += 6;
+                this.dummyRead(this.pc++);
+                this.pc = (this.popStack() | (this.popStack() << 8)) + 1;
+            }
+            else if byte == 0x40 {
+                // RTI
+                this.ticks += 6;
+                this.dummyRead(this.pc++);
+                this.popStatus();
+                this.pc = this.popStack() | (this.popStack() << 8);
+            }
+            else if byte == 0x06 {
+                // ASL
+                this.ticks += 5;
+                this.write(this.address, this.asl(this.read(this.zpg())));
+            }
+            else if byte == 0x0a {
+                // ASL
+                this.ticks += 2;
+                this.a = this.asl(this.a);
+            }
+            else if byte == 0x0e {
+                // ASL
+                this.ticks += 6;
+                this.write(this.address, this.asl(this.read(this.abs())));
+            }
+            else if byte == 0x16 {
+                // ASL
+                this.ticks += 6;
+                this.write(this.address, this.asl(this.read(this.zpx())));
+            }
+            else if byte == 0x1e {
+                // ASL
+                this.ticks += 7;
+                this.write(this.address, this.asl(this.read(this.abx())));
+            }
+            else if byte == 0x46 {
+                // LSR
+                this.ticks += 5;
+                this.write(this.address, this.lsr(this.read(this.zpg())));
+            }
+            else if byte == 0x4a {
+                // LSR
+                this.ticks += 2;
+                this.a = this.lsr(this.a);
+            }
+            else if byte == 0x4e {
+                // LSR
+                this.ticks += 6;
+                this.write(this.address, this.lsr(this.read(this.abs())));
+            }
+            else if byte == 0x56 {
+                // LSR
+                this.ticks += 6;
+                this.write(this.address, this.lsr(this.read(this.zpx())));
+            }
+            else if byte == 0x5e {
+                // LSR
+                this.ticks += 7;
+                this.write(this.address, this.lsr(this.read(this.abx())));
+            }
+            else if byte == 0x26 {
+                // ROL
+                this.ticks += 5;
+                this.write(this.address, this.rol(this.read(this.zpg())));
+            }
+            else if byte == 0x2a {
+                // ROL
+                this.ticks += 2;
+                this.a = this.rol(this.a);
+            }
+            else if byte == 0x2e {
+                // ROL
+                this.ticks += 6;
+                this.write(this.address, this.rol(this.read(this.abs())));
+            }
+            else if byte == 0x36 {
+                // ROL
+                this.ticks += 6;
+                this.write(this.address, this.rol(this.read(this.zpx())));
+            }
+            else if byte == 0x3e {
+                // ROL
+                this.ticks += 7;
+                this.abx();
+                this.dummyRead(((this.address - this.x) & 0xff00) | (this.address & 0xff));
+                this.write(this.address, this.rol(this.read(this.address)));
+            }
+            else if byte == 0x66 {
+                // ROR
+                this.ticks += 5;
+                this.write(this.address, this.ror(this.read(this.zpg())));
+            }
+            else if byte == 0x6a {
+                // ROR
+                this.ticks += 2;
+                this.a = this.ror(this.a);
+            }
+            else if byte == 0x6e {
+                // ROR
+                this.ticks += 6;
+                this.write(this.address, this.ror(this.read(this.abs())));
+            }
+            else if byte == 0x76 {
+                // ROR
+                this.ticks += 6;
+                this.write(this.address, this.ror(this.read(this.zpx())));
+            }
+            else if byte == 0x7e {
+                // ROR
+                this.ticks += 7;
+                this.write(this.address, this.ror(this.read(this.abx())));
+            }
+            else if byte == 0x90 {
+                // BCC
+                this.ticks += 2;
+                this.branch(!this.cf);
+            }
+            else if byte == 0xb0 {
+                // BCS
+                this.ticks += 2;
+                this.branch(this.cf);
+            }
+            else if byte == 0xd0 {
+                // BNE
+                this.ticks += 2;
+                this.branch(!this.zf);
+            }
+            else if byte == 0xf0 {
+                // BEQ
+                this.ticks += 2;
+                this.branch(this.zf);
+            }
+            else if byte == 0x10 {
+                // BPL
+                this.ticks += 2;
+                this.branch(!this.nf);
+            }
+            else if byte == 0x30 {
+                // BMI
+                this.ticks += 2;
+                this.branch(this.nf);
+            }
+            else if byte == 0x50 {
+                // BVC
+                this.ticks += 2;
+                this.branch(!this.of);
+            }
+            else if byte == 0x70 {
+                // BVS
+                this.ticks += 2;
+                this.branch(this.of);
+            }
+            else if byte == 0x4c {
+                // JMP
+                this.ticks += 3;
+                value = this.read(this.abs());
+                this.pc = this.address;
+            }
+            else if byte == 0x6c {
+                // JMP
+                this.ticks += 5;
+                value = this.read(this.ind());
+                this.pc = this.address;
+            }
+            else if byte == 0xa2 {
+                // LDX
+                this.ticks += 2;
+                this.x = this.imm();
+                this.zf = this.x == 0;
+                this.nf = this.x & 0x80 == 0x80;
+            }
+            else if byte == 0xa6 {
+                // LDX
+                this.ticks += 3;
+                this.x = this.read(this.zpg());
+                this.zf = this.x == 0;
+                this.nf = this.x & 0x80 == 0x80;
+            }
+            else if byte == 0xae {
+                // LDX
+                this.ticks += 4;
+                this.x = this.read(this.abs());
+                this.zf = this.x == 0;
+                this.nf = this.x & 0x80 == 0x80;
+            }
+            else if byte == 0xb6 {
+                // LDX
+                this.ticks += 4;
+                this.x = this.read(this.zpy());
+                this.zf = this.x == 0;
+                this.nf = this.x & 0x80 == 0x80;
+            }
+            else if byte == 0xbe {
+                // LDX
+                this.ticks += 4;
+                this.x = this.read(this.abyPb());
+                this.zf = this.x == 0;
+                this.nf = this.x & 0x80 == 0x80;
+            }
+            else if byte == 0xa0 {
+                // LDY
+                this.ticks += 2;
+                this.y = this.imm();
+                this.zf = this.y == 0;
+                this.nf = this.y & 0x80 == 0x80;
+            }
+            else if byte == 0xa4 {
+                // LDY
+                this.ticks += 3;
+                this.y = this.read(this.zpg());
+                this.zf = this.y == 0;
+                this.nf = this.y & 0x80 == 0x80;
+            }
+            else if byte == 0xac {
+                // LDY
+                this.ticks += 4;
+                this.y = this.read(this.abs());
+                this.zf = this.y == 0;
+                this.nf = this.y & 0x80 == 0x80;
+            }
+            else if byte == 0xb4 {
+                // LDY
+                this.ticks += 4;
+                this.y = this.read(this.zpx());
+                this.zf = this.y == 0;
+                this.nf = this.y & 0x80 == 0x80;
+            }
+            else if byte == 0xbc {
+                // LDY
+                this.ticks += 4;
+                this.y = this.read(this.abxPb());
+                this.zf = this.y == 0;
+                this.nf = this.y & 0x80 == 0x80;
+            }
+            else if byte == 0x48 {
+                // PHA
+                this.ticks += 3;
+                this.pushStack(this.a);
+            }
+            else if byte == 0x08 {
+                // PHP
+                this.ticks += 3;
+                this.pushStatus();
+            }
+            else if byte == 0x28 {
+                // PLP
+                this.ticks += 4;
+                this.delayInterrupt();
+                this.popStatus();
+            }
+            else if byte == 0x68 {
+                // PLA
+                this.ticks += 4;
+                this.a = this.popStack();
+                this.setFlags(this.a);
+            }
+            else if byte == 0xe6 {
+                // INC
+                this.ticks += 5;
+                this.write(this.address, this.inc(this.read(this.zpg())));
+            }
+            else if byte == 0xee {
+                // INC
+                this.ticks += 6;
+                this.write(this.address, this.inc(this.read(this.abs())));
+            }
+            else if byte == 0xf6 {
+                // INC
+                this.ticks += 6;
+                this.write(this.address, this.inc(this.read(this.zpx())));
+            }
+            else if byte == 0xfe {
+                // INC
+                this.ticks += 7;
+                this.write(this.address, this.inc(this.read(this.abx())));
+            }
+            else if byte == 0xe8 {
+                // INX
+                this.ticks += 2;
+                this.setFlags(++this.x);
+            }
+            else if byte == 0xc8 {
+                // INY
+                this.ticks += 2;
+                this.setFlags(++this.y);
+            }
+            else if byte == 0xc6 {
+                // DEC
+                this.ticks += 5;
+                this.write(this.address, this.dec(this.read(this.zpg())));
+            }
+            else if byte == 0xce {
+                // DEC
+                this.ticks += 6;
+                this.write(this.address, this.dec(this.read(this.abs())));
+            }
+            else if byte == 0xd6 {
+                // DEC
+                this.ticks += 6;
+                this.write(this.address, this.dec(this.read(this.zpx())));
+            }
+            else if byte == 0xde {
+                // DEC
+                this.ticks += 7;
+                this.write(this.address, this.dec(this.read(this.abx())));
+            }
+            else if byte == 0xca {
+                // DEX
+                this.ticks += 2;
+                this.setFlags(--this.x);
+            }
+            else if byte == 0x88 {
+                // DEY
+                this.ticks += 2;
+                this.setFlags(--this.y);
+            }
+            else if byte == 0xaa {
+                // TAX
+                this.ticks += 2;
+                this.setFlags(this.x = this.a);
+            }
+            else if byte == 0xa8 {
+                // TAY
+                this.ticks += 2;
+                this.setFlags(this.y = this.a);
+            }
+            else if byte == 0xba {
+                // TSX
+                this.ticks += 2;
+                this.setFlags(this.x = this.sp);
+            }
+            else if byte == 0x98 {
+                // TYA
+                this.ticks += 2;
+                this.setFlags(this.a = this.y);
+            }
+            else if byte == 0x9a {
+                // TXS
+                this.ticks += 2;
+                this.sp = this.x;
+            }
+            else if byte == 0x8a {
+                // TXA
+                this.ticks += 2;
+                this.setFlags(this.a = this.x);
+            }
+            else if byte == 0x1a ||
+                    byte == 0x3a ||
+                    byte == 0x5a ||
+                    byte == 0x7a ||
+                    byte == 0xda ||
+                    byte == 0xea ||
+                    byte == 0xfa {
+                // NOOP
+                this.ticks += 2;
+            }
+            else if byte == 0x04 ||
+                    byte == 0x14 ||
+                    byte == 0x34 ||
+                    byte == 0x44 ||
+                    byte == 0x54 ||
+                    byte == 0x64 ||
+                    byte == 0x74 ||
+                    byte == 0x80 ||
+                    byte == 0x82 ||
+                    byte == 0x89 ||
+                    byte == 0xc2 ||
+                    byte == 0xd4 ||
+                    byte == 0xe2 ||
+                    byte == 0xf4 {
+                // IGN1
+                this.ticks += 3;
+                ++this.pc;
+            }
+            else if byte == 0x0c ||
+                    byte == 0x1c ||
+                    byte == 0x3c ||
+                    byte == 0x5c ||
+                    byte == 0x7c ||
+                    byte == 0xdc ||
+                    byte == 0xfc {
+                // IGN2
+                this.ticks += 4;
+                this.pc += 2;
+            }
+            else if byte == 0xa3 {
+                // LAX
+                this.ticks += 6;
+                this.x = this.read(this.inx());
+                this.setFlags(this.a = this.x);
+            }
+            else if byte == 0xa7 {
+                // LAX
+                this.ticks += 3;
+                this.x = this.read(this.zpg());
+                this.setFlags(this.a = this.x);
+            }
+            else if byte == 0xab {
+                // LAX
+                this.ticks += 2;
+                this.x = this.imm();
+                this.setFlags(this.a = this.x);
+            }
+            else if byte == 0xaf {
+                // LAX
+                this.ticks += 4;
+                this.x = this.read(this.abs());
+                this.setFlags(this.a = this.x);
+            }
+            else if byte == 0xb3 {
+                // LAX
+                this.ticks += 5;
+                this.x = this.read(this.inyPb());
+                this.setFlags(this.a = this.x);
+            }
+            else if byte == 0xb7 {
+                // LAX
+                this.ticks += 4;
+                this.x = this.read(this.zpy());
+                this.setFlags(this.a = this.x);
+            }
+            else if byte == 0xbf {
+                // LAX
+                this.ticks += 4;
+                this.x = this.read(this.abyPb());
+                this.setFlags(this.a = this.x);
+            }
+            else if byte == 0x83 {
+                // SAX
+                this.ticks += 6;
+                value = this.read(this.inx());
+                this.write(this.address, this.x & this.a);
+            }
+            else if byte == 0x87 {
+                // SAX
+                this.ticks += 3;
+                value = this.read(this.zpg());
+                this.write(this.address, this.x & this.a);
+            }
+            else if byte == 0x8f {
+                // SAX
+                this.ticks += 4;
+                value = this.read(this.abs());
+                this.write(this.address, this.x & this.a);
+            }
+            else if byte == 0x97 {
+                // SAX
+                this.ticks += 4;
+                value = this.read(this.zpy());
+                this.write(this.address, this.x & this.a);
+            }
+            else if byte == 0x23 {
+                // RLA
+                this.ticks += 8;
+                this.write(this.address, this.rla(this.read(this.inx())));
+            }
+            else if byte == 0x27 {
+                // RLA
+                this.ticks += 5;
+                this.write(this.address, this.rla(this.read(this.zpg())));
+            }
+            else if byte == 0x2f {
+                // RLA
+                this.ticks += 6;
+                this.write(this.address, this.rla(this.read(this.abs())));
+            }
+            else if byte == 0x33 {
+                // RLA
+                this.ticks += 8;
+                this.write(this.address, this.rla(this.read(this.iny())));
+            }
+            else if byte == 0x37 {
+                // RLA
+                this.ticks += 6;
+                this.write(this.address, this.rla(this.read(this.zpx())));
+            }
+            else if byte == 0x3b {
+                // RLA
+                this.ticks += 7;
+                this.write(this.address, this.rla(this.read(this.aby())));
+            }
+            else if byte == 0x3f {
+                // RLA
+                this.ticks += 7;
+                this.write(this.address, this.rla(this.read(this.abx())));
+            }
+            else if byte == 0x63 {
+                // RRA
+                this.ticks += 8;
+                value = this.read(this.inx());
+                this.write(this.address, this.rra(this.read(this.inx())));
+            }
+            else if byte == 0x67 {
+                // RRA
+                this.ticks += 5;
+                this.write(this.address, this.rra(this.read(this.zpg())));
+            }
+            else if byte == 0x6f {
+                // RRA
+                this.ticks += 6;
+                this.write(this.address, this.rra(this.read(this.abs())));
+            }
+            else if byte == 0x73 {
+                // RRA
+                this.ticks += 8;
+                this.write(this.address, this.rra(this.read(this.iny())));
+            }
+            else if byte == 0x77 {
+                // RRA
+                this.ticks += 6;
+                this.write(this.address, this.rra(this.read(this.zpx())));
+            }
+            else if byte == 0x7b {
+                // RRA
+                this.ticks += 7;
+                this.write(this.address, this.rra(this.read(this.aby())));
+            }
+            else if byte == 0x7f {
+                // RRA
+                this.ticks += 7;
+                this.write(this.address, this.rra(this.read(this.abx())));
+            }
+            else if byte == 0x03 {
+                // SLO
+                this.ticks += 8;
+                this.write(this.address, this.slo(this.read(this.inx())));
+            }
+            else if byte == 0x07 {
+                // SLO
+                this.ticks += 5;
+                this.write(this.address, this.slo(this.read(this.zpg())));
+            }
+            else if byte == 0x0f {
+                // SLO
+                this.ticks += 6;
+                this.write(this.address, this.slo(this.read(this.abs())));
+            }
+            else if byte == 0x13 {
+                // SLO
+                this.ticks += 8;
+                this.write(this.address, this.slo(this.read(this.iny())));
+            }
+            else if byte == 0x17 {
+                // SLO
+                this.ticks += 6;
+                this.write(this.address, this.slo(this.read(this.zpx())));
+            }
+            else if byte == 0x1b {
+                // SLO
+                this.ticks += 7;
+                this.write(this.address, this.slo(this.read(this.aby())));
+            }
+            else if byte == 0x1f {
+                // SLO
+                this.ticks += 7;
+                this.write(this.address, this.slo(this.read(this.abx())));
+            }
+            else if byte == 0x43 {
+                // SRE
+                this.ticks += 8;
+                this.write(this.address, this.sre(this.read(this.inx())));
+            }
+            else if byte == 0x47 {
+                // SRE
+                this.ticks += 5;
+                this.write(this.address, this.sre(this.read(this.zpg())));
+            }
+            else if byte == 0x4f {
+                // SRE
+                this.ticks += 6;
+                this.write(this.address, this.sre(this.read(this.abs())));
+            }
+            else if byte == 0x53 {
+                // SRE
+                this.ticks += 8;
+                this.write(this.address, this.sre(this.read(this.iny())));
+            }
+            else if byte == 0x57 {
+                // SRE
+                this.ticks += 6;
+                this.write(this.address, this.sre(this.read(this.zpx())));
+            }
+            else if byte == 0x5b {
+                // SRE
+                this.ticks += 7;
+                this.write(this.address, this.sre(this.read(this.aby())));
+            }
+            else if byte == 0x5f {
+                // SRE
+                this.ticks += 7;
+                this.write(this.address, this.sre(this.read(this.abx())));
+            }
+            else if byte == 0xc3 {
+                // DCP
+                this.ticks += 8;
+                this.write(this.address, this.dcp(this.read(this.inx())));
+            }
+            else if byte == 0xc7 {
+                // DCP
+                this.ticks += 5;
+                this.write(this.address, this.dcp(this.read(this.zpg())));
+            }
+            else if byte == 0xcf {
+                // DCP
+                this.ticks += 6;
+                this.write(this.address, this.dcp(this.read(this.abs())));
+            }
+            else if byte == 0xd3 {
+                // DCP
+                this.ticks += 8;
+                this.write(this.address, this.dcp(this.read(this.iny())));
+            }
+            else if byte == 0xd7 {
+                // DCP
+                this.ticks += 6;
+                this.write(this.address, this.dcp(this.read(this.zpx())));
+            }
+            else if byte == 0xdb {
+                // DCP
+                this.ticks += 7;
+                this.write(this.address, this.dcp(this.read(this.aby())));
+            }
+            else if byte == 0xdf {
+                // DCP
+                this.ticks += 7;
+                this.write(this.address, this.dcp(this.read(this.abx())));
+            }
+            else if byte == 0xe3 {
+                // ISC
+                this.ticks += 8;
+                value = (this.read(this.inx()) + 1);
+                this.write(this.address, value);
+                this.sbc(value);
+            }
+            else if byte == 0xe7 {
+                // ISC
+                this.ticks += 5;
+                value = (this.read(this.zpg()) + 1);
+                this.write(this.address, value);
+                this.sbc(value);
+            }
+            else if byte == 0xef {
+                // ISC
+                this.ticks += 6;
+                value = (this.read(this.abs()) + 1);
+                this.write(this.address, value);
+                this.sbc(value);
+            }
+            else if byte == 0xf3 {
+                // ISC
+                this.ticks += 8;
+                value = (this.read(this.iny()) + 1);
+                this.write(this.address, value);
+                this.sbc(value);
+            }
+            else if byte == 0xf7 {
+                // ISC
+                this.ticks += 6;
+                value = (this.read(this.zpx()) + 1);
+                this.write(this.address, value);
+                this.sbc(value);
+            }
+            else if byte == 0xfb {
+                // ISC
+                this.ticks += 7;
+                value = (this.read(this.aby()) + 1);
+                this.write(this.address, value);
+                this.sbc(value);
+            }
+            else if byte == 0xff {
+                // ISC
+                this.ticks += 7;
+                value = (this.read(this.abx()) + 1);
+                this.write(this.address, value);
+                this.sbc(value);
+            }
+            else if byte == 0x00 {
+                // BRK
+                this.ticks += 7;
+                this.dummyRead(this.pc++);
+                this.breakInterrupt();
+            }
+            else if byte == 0x4b {
+                // ALR
+                this.ticks += 2;
+                this.a &= this.imm();
+                this.cf = this.a & 1 != 0;
+                this.a >>= 1;
+                this.a &= 0x7f;
+                this.setFlags(this.a);
+            }
+            else if byte == 0x0b {
+                // ANC
+                this.ticks += 2;
+                this.a &= this.imm();
+                this.cf = this.nf = this.a & 0x80 == 0x80;
+                this.zf = this.a == 0;
+            }
+            else if byte == 0x2b {
+                // ANC
+                this.ticks += 2;
+                this.a &= this.imm();
+                this.cf = this.nf = this.a & 0x80 == 0x80;
+                this.zf = this.a == 0;
+            }
+            else if byte == 0x6b {
+                // ARR
+                this.ticks += 2;
+                this.a = (((this.imm() & this.a) >> 1) | (if this.cf then 0x80 else 0x00));
+                this.zf = this.a == 0;
+                this.nf = this.a & 0x80 == 0x80;
+                this.cf = this.a & 0x40 == 0x40;
+                this.of = this.a & 0x20 == 0x20 != this.cf;
+            }
+            else if byte == 0xcb {
+                // AXS
+                this.ticks += 2;
+                this.x = (this.a & this.x) - this.imm();
+                this.cf = (this.x >= 0);
+                this.setFlags(this.x);
+            }
+            else if byte == 0x9c {
+                // SYA
+                this.ticks += 5;
+                this.abs();
+                value = (this.y & ((this.address >> 8) + 1));
+                var tmp: Uint8 = (this.address - this.x);
+                if (this.x as Uint16) + tmp <= 0xff {
+                    this.write(this.address, value);
+                } else {
+                    this.write(this.address, this.read(this.address));
+                }
+            }
+            else if byte == 0x9e {
+                // SXA
+                this.ticks += 5;
+                this.abs();
+                value = (this.x & ((this.address >> 8) + 1));
+                var tmp: Uint8 = (this.address - this.y);
+                if (this.y as Uint16) + tmp <= 0xff {
+                    this.write(this.address, value);
+                } else {
+                    this.write(this.address, this.read(this.address));
+                }
+            }
+            else if byte == 0x93 {
+                // AHX
+                this.ticks += 6;
+                this.ahx(this.iny());
+            }
+            else if byte == 0x9f {
+                // AHX
+                this.ticks += 5;
+                this.ahx(this.aby());
+            }
+            else if byte == 0x02 ||
+                    byte == 0x12 ||
+                    byte == 0x22 ||
+                    byte == 0x32 ||
+                    byte == 0x42 ||
+                    byte == 0x52 ||
+                    byte == 0x62 ||
+                    byte == 0x72 ||
+                    byte == 0x92 ||
+                    byte == 0xb2 ||
+                    byte == 0xd2 ||
+                    byte == 0xf2 {
+                // KIL
+            }
+            else {
+                // TODO: invalid instruction
+            }
+
+            this.tick(this.ticks);
+            this.pc &= 0xffff;
+        }
+    }
+
+    function ora(value: Uint8) {
+        this.a |= value;
+        this.setFlags(this.a);
+    }
+
+    function and(value: Uint8) {
+        this.a &= value;
+        this.setFlags(this.a);
+    }
+
+    function eor(value: Uint8) {
+        this.a = value ^ this.a;
+        this.setFlags(this.a);
+    }
+
+    function asl(value: Uint8) {
+        this.cf = value & 0x80 != 0;
+        value = value << 1;
+        this.setFlags(value);
+        return value;
+    }
+
+    function lsr(value: Uint8) {
+        this.cf = value & 1 != 0;
+        value = value >> 1;
+        this.setFlags(value);
+        return value;
+    }
+
+    function rol(value: Uint8) {
+        var newCf = value & 0x80 != 0;
+        value = (value << 1) + (if this.cf then 1 else 0);
+        this.cf = newCf;
+        this.setFlags(value);
+        return value;
+    }
+
+    function ror(value) {
+        var newCf = value & 1 != 0;
+        value = (value >> 1) & 0xff;
+        value += if this.cf then 0x80 else 0;
+        this.cf = newCf;
+        this.setFlags(value);
+        return value;
+    }
+
+    function branch(nes: Ptr[Nes], cond: Bool) using implicit nes {
+        if cond {
+            this.addTicks(1);
+            this.pc = this.rel();
+        } else {
+            ++this.pc;
+        }
+    }
+
+    function cmp(cmpTo: Uint8, value: Uint8) {
+        var tmp = cmpTo - value;
+        if tmp < 0 {
+            tmp += 0xff + 1;
+        }
+
+        this.cf = cmpTo >= value;
+        this.zf = cmpTo == value;
+        this.nf = tmp & 0x80 == 0x80;
+    }
+
+    function adc(value: Uint8): Uint8 {
+        var tmp = value + this.a + (if this.cf then 1 else 0);
+        this.cf = (tmp >> 8 != 0);
+        this.of = (((this.a ^ value) & 0x80) == 0)
+                && (((this.a ^ tmp) & 0x80) != 0);
+        this.a = tmp & 0xff;
+
+        this.setFlags(this.a);
+
+        return this.a;
+    }
+
+    function sbc(value: Uint8): Uint8 {
+        var tmp = this.a - value - (if this.cf then 0 else 1);
+        this.cf = (tmp >> 8 == 0);
+        this.of = (((this.a ^ value) & 0x80) != 0)
+                && (((this.a ^ tmp) & 0x80) != 0);
+        this.a = tmp & 0xff;
+
+        this.setFlags(this.a);
+
+        return this.a;
+    }
+
+    function inc(value: Uint8) {
+        value = (value + 1) & 0xff;
+        this.setFlags(value);
+        return value;
+    }
+
+    function dec(value: Uint8) {
+        value = (value - 1) & 0xff;
+        this.setFlags(value);
+        return value;
+    }
+
+    function rla(value: Uint8) {
+        value = this.rol(value);
+        this.and(value);
+        return value;
+    }
+
+    function rra(value: Uint8) {
+        value = this.ror(value);
+        this.adc(value);
+        return value;
+    }
+
+    function slo(value: Uint8) {
+        this.cf = value & 0x80 != 0;
+        value = (value << 1) & 0xff;
+        this.a |= value;
+        this.setFlags(this.a);
+        return value;
+    }
+
+    function sre(value: Uint8) {
+        this.cf = value & 1 != 0;
+        value = value >> 1;
+        this.a = value ^ this.a;
+        this.setFlags(this.a);
+        return value;
+    }
+
+    function dcp(value: Uint8) {
+        value = (value - 1) & 0xff;
+        var tmp = this.a - value;
+        if tmp < 0 {
+            tmp += 0xff + 1;
+        }
+        this.cf = this.a >= value;
+        this.zf = this.a == value;
+        this.nf = tmp & 0x80 == 0x80;
+        return value;
+    }
+
+    function ahx(nes: Ptr[Nes], addr: Uint16) using implicit nes {
+        var value = (this.a & this.x & ((addr >> 8) + 1)) & 0xff;
+        var tmp = (addr - this.y) & 0xff;
+        if (this.y as Uint16) + tmp <= 0xff {
+            this.write(addr, value);
+        } else {
+            this.write(addr, this.read(this.address));
+        }
+    }
+
+    function imm(nes: Ptr[Nes]) using implicit nes {
+        return this.address = this.readpc();
+    }
+
+    function zpg(nes: Ptr[Nes]) using implicit nes {
+        return this.address = this.readpc();
+    }
+
+    function zpx(nes: Ptr[Nes]) using implicit nes {
+        return this.address = (this.readpc() + this.x) & 0xff;
+    }
+
+    function zpy(nes: Ptr[Nes]) using implicit nes {
+        return this.address = (this.readpc() + this.y) & 0xff;
+    }
+
+    function rel(nes: Ptr[Nes]) using implicit nes {
+        this.address = this.getSigned(this.readpc());
+        this.address = (this.address + this.pc) & 0xffff;
+        if (this.address & 0xff00) != (this.pc & 0xff00) {
+            ++this.ticks;
+        }
+        return this.address;
+    }
+
+    function ind(nes: Ptr[Nes]) using implicit nes {
+        this.address = this.readpc() | (this.readpc() << 8);
+        var nextAddr = this.address + 1;
+        if nextAddr & 0xff == 0 {
+            nextAddr -= 0x0100;
+        }
+        return this.address = ((this.read(this.address) & 0xff) | (this.read(nextAddr) << 8)) & 0xffff;
+    }
+
+    function inx(nes: Ptr[Nes]) using implicit nes {
+        this.address = this.readpc();
+        this.address += this.x;
+        this.address &= 0xff;
+        return this.address = ((this.read(this.address) & 0xff) | (this.read((this.address+1) & 0xff) << 8)) & 0xffff;
+    }
+
+    function iny(nes: Ptr[Nes]) using implicit nes {
+        this.address = this.readpc();
+        return this.address = (((this.read(this.address) & 0xff) | (this.read((this.address + 1) & 0xff) << 8)) + this.y) & 0xffff;
+    }
+
+    function inyPb(nes: Ptr[Nes]) using implicit nes {
+        this.address = this.readpc();
+        this.address = (this.read(this.address) & 0xff) | (this.read((this.address + 1) & 0xff) << 8);
+        // new page
+        if this.address & 0xff00 != (this.address + this.y) & 0xff00 {
+            ++this.ticks;
+        }
+        return this.address = (this.address + this.y) & 0xffff;
+    }
+
+    function abs(nes: Ptr[Nes]) using implicit nes {
+        return this.address = (this.readpc() | (this.readpc() << 8)) & 0xffff;
+    }
+
+    function abx(nes: Ptr[Nes]) using implicit nes {
+        return this.address = ((this.readpc() | (this.readpc() << 8)) + this.x) & 0xffff;
+    }
+
+    function abxPb(nes: Ptr[Nes]) using implicit nes {
+        this.address = this.readpc() | (this.readpc() << 8);
+        // new page
+        if (this.address & 0xff00 != (this.address + this.x) & 0xff00) {
+            ++this.ticks;
+        }
+        return this.address = (this.address + this.x) & 0xffff;
+    }
+
+    function aby(nes: Ptr[Nes]) using implicit nes {
+        return this.address = ((this.readpc() | (this.readpc() << 8)) + this.y) & 0xffff;
+    }
+
+    function abyPb(nes: Ptr[Nes]) using implicit nes {
+        this.address = this.readpc() | (this.readpc() << 8);
+        // new page
+        if this.address & 0xff00 != (this.address + this.y) & 0xff00 {
+            ++this.ticks;
+        }
+        return this.address = (this.address + this.y) & 0xffff;
+    }
+
+    function pushStack(nes: Ptr[Nes], value: Uint8) using implicit nes {
+        this.write(0x100 + (this.sp & 0xff), value);
+        this.sp--;
+        this.sp &= 0xff;
+    }
+
+    function popStack(nes: Ptr[Nes]): Uint8 using implicit nes {
+        ++this.sp;
+        this.sp &= 0xff;
+        return this.read(0x100 + this.sp);
+    }
+
+    function pushStatus(nes: Ptr[Nes]) using implicit nes {
+        this.pushStack(this.getStatusFlag() | 0x30);
+    }
+
+    function popStatus(nes: Ptr[Nes]) using implicit nes {
+        this.setStatusFlag(this.popStack());
+    }
+
+    function getStatusFlag() {
+        return (if this.cf then 0x1 else 0) |
+            (if this.zf then 0x2 else 0) |
+            (if this.id then 0x4 else 0) |
+            (if this.dm then 0x8 else 0) |
+            (if this.of then 0x40 else 0) |
+            (if this.nf then 0x80 else 0);
+    }
+    function setStatusFlag(val: Uint8) {
+        this.cf = val & 0x1 != 0;
+        this.zf = val & 0x2 != 0;
+        this.id = val & 0x4 != 0;
+        this.dm = val & 0x8 != 0;
+        this.bc = val & 0x10 != 0;
+        this.uf = true;
+        this.of = val & 0x40 != 0;
+        this.nf = val & 0x80 != 0;
+        return val;
+    }
+
+    function read(nes: Ptr[Nes], addr: Uint16): Uint8 using implicit nes {
+        this.tick(1);
+        return nes.ram.read(addr & 0xffff) & 0xff;
+    }
+
+    function readpc(nes: Ptr[Nes]) using implicit nes {
+        return this.read(this.pc++);
+    }
+
+    function dummyRead(nes: Ptr[Nes], addr: Uint16) using implicit nes {
+        this.read(addr);
+    }
+
+    function write(nes: Ptr[Nes], addr: Uint16, data: Uint8) using implicit nes {
+        this.tick(1);
+        nes.ram.write(addr & 0xffff, data & 0xff);
+    }
+
+    function doNmi(nes: Ptr[Nes]) using implicit nes {
+        this.pushStack(this.pc >> 8);
+        this.pushStack(this.pc & 0xff);
+        this.pushStack(this.getStatusFlag());
+        this.pc = this.read(0xfffa) | (this.read(0xfffb) << 8);
+        this.addTicks(7);
+        this.id = true;
+    }
+
+    function doInterrupt(nes: Ptr[Nes]) using implicit nes {
+        this.pushStack(this.pc >> 8); // high bit 1st
+        this.pushStack((this.pc) & 0xff);// check that this pushes right this.address
+        this.pushStack(this.getStatusFlag());
+        this.pc = this.read(0xfffe) | (this.read(0xffff) << 8);
+        this.id = true;
+    }
+
+    function breakInterrupt(nes: Ptr[Nes]) using implicit nes {
+        // same as interrupt but BRK flag is turned on
+        this.pushStack(this.pc >> 8); // high bit 1st
+        this.pushStack(this.pc & 0xff); // check that this pushes right this.address
+        this.pushStatus();
+        this.pc = this.read(0xfffe) | (this.read(0xffff)  << 8);
+        this.id = true;
+    }
+
+    function delayInterrupt() {
+        this.interruptDelay = true;
+        this.prevIntFlag = this.id;
+    }
+
+    function addTicks(ticks: Uint16) {
+        this.cycles += ticks;
+        this.apuCycles += ticks;
+        this.cycleCount += ticks;
+    }
+
+    function tick(ticks: Uint8) {
+        this.cycles += ticks;
+        this.apuCycles += ticks;
+        this.cycleCount += ticks;
+        this.ticks -= ticks;
+    }
+
+    function setFlags(value: Uint8) {
+        this.zf = value == 0;
+        this.nf = value & 0x80 == 0x80;
+    }
+
+    function getSigned(byte: Uint8): Uint8 {
+        return if (byte & 0x80) != 0 then -((~(byte - 1)) & 0xff) else byte;
+    }
+}

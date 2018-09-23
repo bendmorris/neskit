@@ -1,0 +1,63 @@
+import neskit.apu;
+import neskit.controller;
+import neskit.cpu;
+import neskit.mapper;
+import neskit.ppu;
+import neskit.ram;
+import neskit.rom;
+
+struct Nes {
+    public var apu: Apu;
+    public var cpu: Cpu;
+    public var ppu: Ppu;
+    public var ram: Ram;
+    public var rom: Rom;
+    public var mapper: Mapper;
+    public var controllers: CArray[NesController, 2] = empty;
+
+    public static function new(rom: Rom) {
+        var cpu = Cpu.new();
+        var ram = Ram.new();
+        var apu = Apu.new();
+        var ppu = Ppu.new();
+        var nes = struct Nes {
+            cpu,
+            ram,
+            apu,
+            ppu,
+            rom,
+            mapper: empty
+        };
+        return nes;
+    }
+
+    public function init() {
+        printf("NES: init\n");
+        this.ram.reset();
+
+        this.ram.write(0x0008, 0xf7);
+        this.ram.write(0x0009, 0xef);
+        this.ram.write(0x000a, 0xdf);
+        this.ram.write(0x000f, 0xbf);
+
+        for i in 0x4000 ...  0x4010
+        {
+            this.apu.write(i - 0x4000, 0);
+        }
+
+        this.apu.write(0x0015, 0);
+        this.apu.write(0x0017, 0);
+
+        // this.cpu.pc = (this.mapper.read(0xfffd) << 8) | this.mapper.read(0xfffc);
+    }
+
+    public function reset() {
+        printf("NES: reset\n");
+        using implicit this {
+            this.cpu.pc = (this.mapper.read(0xfffd) << 8) | this.mapper.read(0xfffc);
+            this.apu.write(0x0015, 0);
+            this.apu.write(0x0017, this.apu.read(0x0017));
+            this.cpu.id = true;
+        }
+    }
+}

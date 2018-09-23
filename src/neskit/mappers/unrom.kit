@@ -1,0 +1,29 @@
+import neskit.nes;
+
+struct UnromMapper {
+    var prgMap: CArray[Uint32, 32];
+    var chrMap: CArray[Uint32, 8];
+    var bank: Uint8 = 0;
+
+    public function init() {}
+
+    public function read(addr: Uint32): Uint8 {}
+
+    public function write(nes: Nes, addr: Uint32, value: Uint8) {
+        if addr < 0x8000 || addr > 0xffff
+        {
+            // TODO
+        }
+        else
+        {
+            nes.ppu.catchUp();
+
+            this.bank = value & 0xf;
+            // remap switchable 1st PRG bank
+            for i in 0 ... 16
+            {
+                this.prgMap[i] = (0x400 * (i + 16 * this.bank)) & (nes.rom.prgSize - 1);
+            }
+        }
+    }
+}

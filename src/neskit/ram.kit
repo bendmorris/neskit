@@ -1,0 +1,24 @@
+struct Ram {
+    var mem: CArray[Uint8, 0x800];
+    var dmaCounter: Int = 0;
+
+    public static function new() {
+        var ram: Ram;
+        return ram;
+    }
+
+    public function reset() {
+        for i in 0 ... 0x800
+        {
+            this.mem[i] = 0xff;
+        }
+    }
+
+    public function read(i: Uint32) {
+        return this.mem[i];
+    }
+
+    public function write(i: Uint32, v: Uint8) {
+        this.mem[i] = v;
+    }
+}

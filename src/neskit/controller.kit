@@ -1,0 +1,24 @@
+enum NesControllerButton {
+    // public static var buttons = [Up,Down,Left,Right,A,B,Select,Start];
+
+    A;
+    B;
+    Select;
+    Start;
+    Up;
+    Down;
+    Left;
+    Right;
+}
+
+struct NesController {
+    var currentBtn = 0;
+
+    public function latch() {
+        this.currentBtn = 0;
+    }
+
+    public function pop() {
+        // TODO
+    }
+}

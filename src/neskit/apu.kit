@@ -1,0 +1,18 @@
+struct Apu {
+    var ch1: Bool = false;
+    var ch2: Bool = false;
+    var ch3: Bool = false;
+    var ch4: Bool = false;
+    var ch5: Bool = false;
+
+    var cycles: Size = 0;
+    var sampleCounter: Size = 0;
+    var sampleSync: Float = 0;
+
+    public static function new() {
+        return struct Apu {};
+    }
+
+    public function write(addr: Uint32, value: Uint8) {}
+    public function read(addr: Uint32) {}
+}

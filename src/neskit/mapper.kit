@@ -1,0 +1,32 @@
+import neskit.mappers.*;
+import neskit.nes;
+
+enum Mapper {
+    Aorom(x: AoromMapper);
+    Unrom(x: UnromMapper);
+
+    // public static function getMapper(i: Int): Box[Mapper] {
+
+    // }
+
+    public function init() {
+        match this {
+            Aorom(x) => x.init();
+            Unrom(x) => x.init();
+        }
+    }
+
+    public function read(nes: Nes, addr: Uint32): Uint8 {
+        using implicit nes match this {
+            Aorom(x) => return x.read(addr);
+            Unrom(x) => return x.read(addr);
+        }
+    }
+
+    public function write(nes: Nes, addr: Uint32, value: Uint8) {
+        using implicit nes match this {
+            Aorom(x) => x.write(addr, value);
+            Unrom(x) => x.write(addr, value);
+        }
+    }
+}
