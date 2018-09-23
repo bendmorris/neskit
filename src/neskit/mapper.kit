@@ -1,13 +1,104 @@
 import neskit.mappers.*;
+import neskit.mirror;
 import neskit.nes;
 
-enum Mapper {
+struct Mapper {
+    public var mapperType: MapperType;
+
+    public var nametables: CArray[Uint8, 4] = empty;
+    public var prgMap: CArray[Uint8, 32] = empty;
+    public var chrMap: CArray[Uint8, 8] = empty;
+
+    public static function get(nes: Ptr[Nes], n: Int): Mapper using implicit nes {
+        var mapperType: MapperType;
+        match n {
+            0 => mapperType = Nrom;
+            // 1 => return Mmc1;
+            2 => mapperType = Unrom(UnromMapper.new());
+            // 3 => return Cnrom;
+            // 4 => return Mmc3;
+            7 => mapperType = Aorom(AoromMapper.new());
+            default => {
+                printf("unrecognized mapper: %i\n", n);
+                exit(1);
+            }
+        }
+        var mapper = struct Mapper {mapperType};
+        mapper.init();
+        return mapper;
+    }
+
+    public function init(nes: Ptr[Nes]) {
+        for i in 0 ... 32 {
+            this.prgMap[i] = (0x400 * i) & (nes.rom.prgSize - 1);
+        }
+        for i in 0 ... 8 {
+            this.chrMap[i] = (0x400 * i) & (nes.rom.chrSize - 1);
+        }
+    }
+
+    public function setMirror(m: MirrorMode)
+    {
+        match m
+        {
+            H_MIRROR => {
+                this.nametables[0] = 0;
+                this.nametables[1] = 0;
+                this.nametables[2] = 1;
+                this.nametables[3] = 1;
+            }
+            V_MIRROR => {
+                this.nametables[0] = 0;
+                this.nametables[1] = 1;
+                this.nametables[2] = 0;
+                this.nametables[3] = 1;
+            }
+            SS_MIRROR0 => {
+                this.nametables[0] = 0;
+                this.nametables[1] = 0;
+                this.nametables[2] = 0;
+                this.nametables[3] = 0;
+            }
+            SS_MIRROR1 => {
+                this.nametables[0] = 1;
+                this.nametables[1] = 1;
+                this.nametables[2] = 1;
+                this.nametables[3] = 1;
+            }
+            FOUR_SCREEN_MIRROR => {
+                this.nametables[0] = 0;
+                this.nametables[1] = 1;
+                this.nametables[2] = 2;
+                this.nametables[3] = 3;
+            }
+        }
+    }
+
+    public function read(nes: Ptr[Nes], addr: Uint32): Uint8 using implicit nes
+    {
+        if addr >= 0x8000 {
+            return nes.rom.prgRom[this.prgMap[((addr & 0x7fff)) >> 10] + (addr & 0x3ff)];
+        } else if addr >= 0x6000 && nes.rom.hasPrgRam {
+            return nes.rom.prgRam[addr & 0x1fff];
+        } else {
+            return addr >> 8;
+        }
+    }
+
+    public function write(nes: Ptr[Nes], addr: Uint32, data: Uint8) using implicit nes
+    {
+        if addr >= 0x6000 && addr < 0x8000 {
+            var a = addr & 0x1fff;
+            nes.rom.sramDirty = nes.rom.sramDirty || nes.rom.prgRam[a] != data;
+            nes.rom.prgRam[a] = data;
+        }
+    }
+}
+
+enum MapperType {
+    Nrom;
     Aorom(x: AoromMapper);
     Unrom(x: UnromMapper);
-
-    // public static function getMapper(i: Int): Box[Mapper] {
-
-    // }
 
     public function init() {
         match this {
@@ -16,14 +107,14 @@ enum Mapper {
         }
     }
 
-    public function read(nes: Nes, addr: Uint32): Uint8 {
+    public function read(nes: Ptr[Nes], addr: Uint32): Uint8 {
         using implicit nes match this {
             Aorom(x) => return x.read(addr);
             Unrom(x) => return x.read(addr);
         }
     }
 
-    public function write(nes: Nes, addr: Uint32, value: Uint8) {
+    public function write(nes: Ptr[Nes], addr: Uint32, value: Uint8) {
         using implicit nes match this {
             Aorom(x) => x.write(addr, value);
             Unrom(x) => x.write(addr, value);

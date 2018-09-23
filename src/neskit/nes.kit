@@ -15,7 +15,7 @@ struct Nes {
     public var mapper: Mapper;
     public var controllers: CArray[NesController, 2] = empty;
 
-    public static function new(rom: Rom) {
+    public static function new() {
         var cpu = Cpu.new();
         var ram = Ram.new();
         var apu = Apu.new();
@@ -25,13 +25,13 @@ struct Nes {
             ram,
             apu,
             ppu,
-            rom,
+            rom: empty,
             mapper: empty
         };
         return nes;
     }
 
-    public function init() {
+    public function init() using implicit this {
         printf("NES: init\n");
         this.ram.reset();
 
@@ -51,6 +51,13 @@ struct Nes {
         // this.cpu.pc = (this.mapper.read(0xfffd) << 8) | this.mapper.read(0xfffc);
     }
 
+    public function loadRom(path: CString) using implicit this {
+        printf("NES: loading %s\n", path);
+        var result = Rom.new(path);
+        this.rom = result.unwrap();
+        this.mapper = this.rom.getMapper();
+    }
+
     public function reset() {
         printf("NES: reset\n");
         using implicit this {
@@ -59,5 +66,9 @@ struct Nes {
             this.apu.write(0x0017, this.apu.read(0x0017));
             this.cpu.id = true;
         }
+    }
+
+    public function runFrame() using implicit this {
+        this.cpu.runFrame();
     }
 }

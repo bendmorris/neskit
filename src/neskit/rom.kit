@@ -1,11 +1,14 @@
+import neskit.mapper;
 import neskit.mirror;
+import neskit.nes;
+import neskit.utils;
 
 struct Rom {
-    public var mirror: MirrorMode;
+    public var mirror: MirrorMode = H_MIRROR;
 
-    public var prgRom: Ptr[Uint8];
-    public var prgRam: Ptr[Uint8];
-    public var chr: Ptr[Uint8];                 // ROM or RAM
+    public var prgRom: Ptr[Uint8] = null;
+    public var prgRam: CArray[Uint8, 0x2000] = empty;
+    public var chr: Ptr[Uint8] = null;          // ROM or RAM
 
     public var prgSize: Int = 0;                // size of PRG ROM (# of 0x4000 blocks)
     public var chrSize: Int = 0;                // size of CHR ROM (# of 0x2000 blocks)
@@ -16,4 +19,70 @@ struct Rom {
     public var sramDirty: Bool = false;
 
     var mapperNumber: Int = 0;
+
+    public static function new(nes: Ptr[Nes], path: CString): Result[Rom, CString] {
+        var file = fopen(path, "rb");
+        var rom = struct Rom {};
+        var pos = 0;
+
+        // check for "NES" at beginning of header
+        if fgetc(file) != c'N' || fgetc(file) != c'E' || fgetc(file) != c'S' || fgetc(file) != 0x1A {
+            return Error("not in iNES format");
+        }
+        rom.prgSize = fgetc(file) * 0x4000;
+        if (rom.prgSize == 0) {
+            return Error("no PRG ROM size in header");
+        }
+        rom.chrSize = fgetc(file) * 0x2000;
+        var f6 = fgetc(file);
+        var f7 = fgetc(file);
+
+        var fourScreenMirror = getbit(f6, 3);
+        var verticalMirror = getbit(f6, 0);
+        rom.mirror =
+            if fourScreenMirror
+                then FOUR_SCREEN_MIRROR
+            else if verticalMirror
+                then V_MIRROR
+                else H_MIRROR;
+
+        rom.hasSram = getbit(f6, 1);
+
+        rom.prgRom = malloc(rom.prgSize);
+
+        rom.mapperNumber = (f6 >> 4);// + f7 & 0xF0;
+
+        for i in 0 ... 8 {
+            fgetc(file);
+        }
+
+        var toRead = rom.prgSize;
+        while toRead > 0 {
+            toRead -= fread(rom.prgRom, sizeof Uint8, rom.prgSize, file);
+        }
+
+        if rom.chrSize > 0 {
+            rom.chr = malloc(rom.chrSize);
+            var toRead = rom.chrSize;
+            while toRead > 0 {
+                toRead -= fread(rom.chr, sizeof Uint8, rom.chrSize, file);
+            }
+        } else {
+            rom.hasChrRam = true;
+            rom.chrSize = 0x2000;
+            rom.chr = malloc(rom.chrSize);
+        }
+
+        return Ok(rom);
+    }
+
+    public function getMapper(nes: Ptr[Nes]) using implicit nes {
+        var mapper = Mapper.get(this.mapperNumber);
+        mapper.setMirror(this.mirror);
+    }
+
+    public function dispose() {
+        free(this.prgRom);
+        free(this.chr);
+    }
 }

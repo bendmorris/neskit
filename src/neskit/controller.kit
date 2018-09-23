@@ -12,6 +12,7 @@ enum NesControllerButton {
 }
 
 struct NesController {
+    public var active: Bool = true;
     var currentBtn = 0;
 
     public function latch() {
@@ -20,5 +21,6 @@ struct NesController {
 
     public function pop() {
         // TODO
+        return 0;
     }
 }

@@ -74,4 +74,11 @@ struct Ppu {
     }
 
     public function catchUp() {}
+
+    public function read(addr: Uint32): Uint8 {
+        // TODO
+        return 0;
+    }
+
+    public function write(addr: Uint32, value: Uint8) {}
 }

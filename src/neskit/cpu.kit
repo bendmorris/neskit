@@ -47,7 +47,7 @@ struct Cpu {
     public function runFrame(nes: Ptr[Nes]) using implicit nes {
         var ppu = nes.ppu;
         ppu.stolenCycles = 0;
-        while (!ppu.finished) {
+        while !ppu.finished {
             this.runCycle();
 
             var projScanline = (ppu.scanline + (ppu.cycles + (this.cycles * 3)) / 340) as Uint8;
