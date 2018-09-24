@@ -5,6 +5,7 @@ import neskit.mapper;
 import neskit.ppu;
 import neskit.ram;
 import neskit.rom;
+import neskit.screenbuffer;
 
 struct Nes {
     public var apu: Apu;
@@ -14,6 +15,7 @@ struct Nes {
     public var rom: Rom;
     public var mapper: Mapper;
     public var controllers: CArray[NesController, 2] = empty;
+    // public var screenBuffer: Box[ScreenBuffer] = null;
 
     public static function new() {
         var cpu = Cpu.new();

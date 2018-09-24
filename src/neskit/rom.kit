@@ -30,19 +30,19 @@ struct Rom {
             return Error("not in iNES format");
         }
         rom.prgSize = fgetc(file) * 0x4000;
+        printf("PRG size: 0x%x\n", rom.prgSize);
         if (rom.prgSize == 0) {
             return Error("no PRG ROM size in header");
         }
         rom.chrSize = fgetc(file) * 0x2000;
+        printf("CHR size: 0x%x\n", rom.chrSize);
         var f6 = fgetc(file);
         var f7 = fgetc(file);
 
-        var fourScreenMirror = getbit(f6, 3);
-        var verticalMirror = getbit(f6, 0);
         rom.mirror =
-            if fourScreenMirror
+            if getbit(f6, 3)
                 then FOUR_SCREEN_MIRROR
-            else if verticalMirror
+            else if getbit(f6, 0)
                 then V_MIRROR
                 else H_MIRROR;
 
@@ -56,16 +56,16 @@ struct Rom {
             fgetc(file);
         }
 
-        var toRead = rom.prgSize;
-        while toRead > 0 {
-            toRead -= fread(rom.prgRom, sizeof Uint8, rom.prgSize, file);
+        var read = 0;
+        while read > rom.prgSize {
+            read += fread(rom.prgRom + read, sizeof Uint8, rom.prgSize, file);
         }
 
         if rom.chrSize > 0 {
             rom.chr = malloc(rom.chrSize);
-            var toRead = rom.chrSize;
-            while toRead > 0 {
-                toRead -= fread(rom.chr, sizeof Uint8, rom.chrSize, file);
+            var read = 0;
+            while read < rom.chrSize {
+                read += fread(rom.chr + read, sizeof Uint8, rom.chrSize, file);
             }
         } else {
             rom.hasChrRam = true;

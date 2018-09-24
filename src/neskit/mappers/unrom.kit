@@ -13,7 +13,7 @@ struct UnromMapper {
 
     public function read(addr: Uint32): Uint8 {}
 
-    public function write(nes: Ptr[Nes], addr: Uint32, value: Uint8) {
+    public function write(nes: Ptr[Nes], addr: Uint32, value: Uint8) using implicit nes {
         if addr < 0x8000 || addr > 0xffff
         {
             // TODO

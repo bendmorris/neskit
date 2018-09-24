@@ -1,0 +1,59 @@
+
+abstract Palette: Void {
+    static var _colorCache: CArray[Uint32, 0x200] = empty;
+
+    public static function getColor(c:Int)
+    {
+        return Self._colorCache[c];
+    }
+
+    public static function init() {
+        // just or's all the colors with opaque alpha and does the color emphasis calcs
+        // This set of colors matches current version of ntsc filter output
+        var colorarray = [
+            0x606060, 0x09268e, 0x1a11bd, 0x3409b6, 0x5e0982, 0x790939, 0x6f0c09, 0x511f09,
+            0x293709, 0x0d4809, 0x094e09, 0x094b17, 0x093a5a, 0x000000, 0x000000, 0x000000,
+            0xb1b1b1, 0x1658f7, 0x4433ff, 0x7d20ff, 0xb515d8, 0xcb1d73, 0xc62922, 0x954f09,
+            0x5f7209, 0x28ac09, 0x099c09, 0x099032, 0x0976a2, 0x090909, 0x000000, 0x000000,
+            0xffffff, 0x5dadff, 0x9d84ff, 0xd76aff, 0xff5dff, 0xff63c6, 0xff8150, 0xffa50d,
+            0xccc409, 0x74f009, 0x54fc1c, 0x33f881, 0x3fd4ff, 0x494949, 0x000000, 0x000000,
+            0xffffff, 0xc8eaff, 0xe1d8ff, 0xffccff, 0xffc6ff, 0xffcbfb, 0xffd7c2, 0xffe999,
+            0xf0f986, 0xd6ff90, 0xbdffaf, 0xb3ffd7, 0xb3ffff, 0xbcbcbc, 0x000000, 0x000000,
+        ];
+        var att = 0.7;
+
+        var colors: CArray[CArray[Uint32, 64], 8] = empty;
+
+        for j in 0 ... colorarray.length {
+            var col = colorarray[j];
+            var r = (col & 0xff0000) >> 16;
+            var g = (col & 0xff00) >> 8;
+            var b = (col & 0xff);
+            colors[0][j] = Self.compose(r, g, b);
+            //emphasize red
+            colors[1][j] = Self.compose(r, g * att, b * att);
+            //emphasize green
+            colors[2][j] = Self.compose(r * att, g, b * att);
+            //emphasize yellow
+            colors[3][j] = Self.compose(r, g, b * att);
+            //emphasize blue
+            colors[4][j] = Self.compose(r * att, g * att, b);
+            //emphasize purple
+            colors[5][j] = Self.compose(r, g * att, b);
+            //emphasize cyan
+            colors[6][j] = Self.compose(r * att, g, b);
+            //de-emph all 3 colors
+            colors[7][j] = Self.compose(r * att, g * att, b * att);
+        }
+
+        for i in 0 ... 8 {
+            for j in 0 ... colorarray.length {
+                Self._colorCache[((i&7) << 6) | j] = colors[i][j];
+            }
+        }
+    }
+
+    static function compose(r: Float, g: Float, b: Float): Uint32 {
+        return 0xff000000 | (r as Uint8 << 16) | (g as Uint8 << 8) | (b as Uint8);
+    }
+}
