@@ -54,6 +54,9 @@ abstract Palette: Void {
     }
 
     static function compose(r: Float, g: Float, b: Float): Uint32 {
-        return 0xff000000 | (r as Uint8 << 16) | (g as Uint8 << 8) | (b as Uint8);
+        var ri: Uint32 = r as Uint32 << 16;
+        var gi: Uint32 = g as Uint32 << 8;
+        var bi: Uint32 = b as Uint32 & 0xff;
+        return 0xff000000_u32 | ri | gi | bi;
     }
 }

@@ -10,8 +10,8 @@ struct Rom {
     public var prgRam: CArray[Uint8, 0x2000] = empty;
     public var chr: Ptr[Uint8] = null;          // ROM or RAM
 
-    public var prgSize: Int = 0;                // size of PRG ROM (# of 0x4000 blocks)
-    public var chrSize: Int = 0;                // size of CHR ROM (# of 0x2000 blocks)
+    public var prgSize: Size = 0;                // size of PRG ROM (# of 0x4000 blocks)
+    public var chrSize: Size = 0;                // size of CHR ROM (# of 0x2000 blocks)
 
     public var hasPrgRam: Bool = true;
     public var hasChrRam: Bool = false;
@@ -29,12 +29,12 @@ struct Rom {
         if fgetc(file) != c'N' || fgetc(file) != c'E' || fgetc(file) != c'S' || fgetc(file) != 0x1A {
             return Error("not in iNES format");
         }
-        rom.prgSize = fgetc(file) * 0x4000;
+        rom.prgSize = (fgetc(file) as Uint8) * 0x4000;
         printf("PRG size: 0x%x\n", rom.prgSize);
         if (rom.prgSize == 0) {
             return Error("no PRG ROM size in header");
         }
-        rom.chrSize = fgetc(file) * 0x2000;
+        rom.chrSize = (fgetc(file) as Uint8) * 0x2000;
         printf("CHR size: 0x%x\n", rom.chrSize);
         var f6 = fgetc(file);
         var f7 = fgetc(file);
@@ -48,7 +48,7 @@ struct Rom {
 
         rom.hasSram = getbit(f6, 1);
 
-        rom.prgRom = malloc(rom.prgSize);
+        rom.prgRom = malloc(rom.prgSize * sizeof Uint8);
 
         rom.mapperNumber = (f6 >> 4);// + f7 & 0xF0;
 
@@ -57,15 +57,17 @@ struct Rom {
         }
 
         var read = 0;
-        while read > rom.prgSize {
-            read += fread(rom.prgRom + read, sizeof Uint8, rom.prgSize, file);
+        var size = rom.prgSize * sizeof Uint8;
+        while read < size {
+            read += fread(rom.prgRom + read, sizeof Uint8, size - read, file);
         }
 
         if rom.chrSize > 0 {
-            rom.chr = malloc(rom.chrSize);
+            rom.chr = malloc(rom.chrSize * sizeof Uint8);
             var read = 0;
-            while read < rom.chrSize {
-                read += fread(rom.chr + read, sizeof Uint8, rom.chrSize, file);
+            var size = rom.chrSize * sizeof Uint8;
+            while read < size {
+                read += fread(rom.chr + read, sizeof Uint8, size - read, file);
             }
         } else {
             rom.hasChrRam = true;
@@ -78,7 +80,7 @@ struct Rom {
 
     public function getMapper(nes: Ptr[Nes]) using implicit nes {
         var mapper = Mapper.get(this.mapperNumber);
-        mapper.setMirror(this.mirror);
+        return mapper;
     }
 
     public function dispose() {

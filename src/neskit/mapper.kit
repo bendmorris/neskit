@@ -1,13 +1,10 @@
 import neskit.mappers.*;
-import neskit.mirror;
 import neskit.nes;
 
 struct Mapper {
     public var mapperType: MapperType;
 
-    public var nametableMap: CArray[Uint8, 4] = empty;
-    public var prgMap: CArray[Uint8, 32] = empty;
-    public var chrMap: CArray[Uint8, 8] = empty;
+    public var prgMap: CArray[Uint16, 32] = empty;
 
     public static function get(nes: Ptr[Nes], n: Int): Mapper using implicit nes {
         var mapperType: MapperType;
@@ -24,7 +21,6 @@ struct Mapper {
             }
         }
         var mapper = struct Mapper {mapperType};
-        mapper.init();
         return mapper;
     }
 
@@ -32,51 +28,11 @@ struct Mapper {
         for i in 0 ... 32 {
             this.prgMap[i] = (0x400 * i) & (nes.rom.prgSize - 1);
         }
-        for i in 0 ... 8 {
-            this.chrMap[i] = (0x400 * i) & (nes.rom.chrSize - 1);
-        }
     }
 
-    public function setMirror(m: MirrorMode)
-    {
-        match m
-        {
-            H_MIRROR => {
-                this.nametableMap[0] = 0;
-                this.nametableMap[1] = 0;
-                this.nametableMap[2] = 1;
-                this.nametableMap[3] = 1;
-            }
-            V_MIRROR => {
-                this.nametableMap[0] = 0;
-                this.nametableMap[1] = 1;
-                this.nametableMap[2] = 0;
-                this.nametableMap[3] = 1;
-            }
-            SS_MIRROR0 => {
-                this.nametableMap[0] = 0;
-                this.nametableMap[1] = 0;
-                this.nametableMap[2] = 0;
-                this.nametableMap[3] = 0;
-            }
-            SS_MIRROR1 => {
-                this.nametableMap[0] = 1;
-                this.nametableMap[1] = 1;
-                this.nametableMap[2] = 1;
-                this.nametableMap[3] = 1;
-            }
-            FOUR_SCREEN_MIRROR => {
-                this.nametableMap[0] = 0;
-                this.nametableMap[1] = 1;
-                this.nametableMap[2] = 2;
-                this.nametableMap[3] = 3;
-            }
-        }
-    }
-
-    public function read(nes: Ptr[Nes], addr: Int32): Uint8 using implicit nes {
+    public function read(nes: Ptr[Nes], addr: Uint16): Uint8 using implicit nes {
         if addr >= 0x8000 {
-            return nes.rom.prgRom[this.prgMap[((addr & 0x7fff)) >> 10] + (addr & 0x3ff)];
+            return nes.rom.prgRom[this.prgMap[(((addr & 0x7fff)) >> 10) & 0x1f] + (addr & 0x3ff)];
         } else if addr >= 0x6000 && nes.rom.hasPrgRam {
             return nes.rom.prgRam[addr & 0x1fff];
         } else {
@@ -84,75 +40,11 @@ struct Mapper {
         }
     }
 
-    public function write(nes: Ptr[Nes], addr: Uint32, data: Uint8) using implicit nes {
+    public function write(nes: Ptr[Nes], addr: Uint16, data: Uint8) using implicit nes {
         if addr >= 0x6000 && addr < 0x8000 {
             var a = addr & 0x1fff;
             nes.rom.sramDirty = nes.rom.sramDirty || nes.rom.prgRam[a] != data;
             nes.rom.prgRam[a] = data;
-        }
-    }
-
-    public function ppuRead(nes: Ptr[Nes], addr: Uint32): Uint8 using implicit nes {
-        var _readResult: Uint8;
-        if addr < 0x2000 {
-            _readResult = nes.rom.chr[this.chrMap[addr >> 10] + (addr & 1023)];
-        } else {
-            match addr & 0xc00
-            {
-                0 => {
-                    _readResult = nes.ppu.nametables[this.nametableMap[0]][addr & 0x3ff];
-                }
-                0x400 => {
-                    _readResult = nes.ppu.nametables[this.nametableMap[1]][addr & 0x3ff];
-                }
-                0x800 => {
-                    _readResult = nes.ppu.nametables[this.nametableMap[2]][addr & 0x3ff];
-                }
-                default => {
-                    if addr >= 0x3f00 {
-                        addr &= 0x1f;
-                        if addr >= 0x10 && ((addr & 3) == 0) {
-                            addr -= 0x10;
-                        }
-                        _readResult = nes.ppu.pal[addr];
-                    } else {
-                        _readResult = nes.ppu.nametables[this.nametableMap[3]][addr & 0x3ff];
-                    }
-                }
-            }
-        }
-        return _readResult;
-    }
-
-    public function ppuWrite(nes: Ptr[Nes], addr: Int, data: Int) using implicit nes {
-        if (addr < 0x2000) {
-            nes.rom.chr[this.chrMap[addr >> 10] + (addr & 0x3ff)] = data;
-        } else {
-            match addr & 0xc00
-            {
-                0x0 => {
-                    nes.ppu.nametables[this.nametableMap[0]][addr & 0x3ff] = data;
-                }
-                0x400 => {
-                    nes.ppu.nametables[this.nametableMap[1]][addr & 0x3ff] = data;
-                }
-                0x800 => {
-                    nes.ppu.nametables[this.nametableMap[2]][addr & 0x3ff] = data;
-                }
-                default => {
-                    if addr >= 0x3f00 {
-                        addr &= 0x1f;
-                        if (addr >= 0x10 && ((addr & 3) == 0))
-                        {
-                            // mirrors
-                            addr -= 0x10;
-                        }
-                        nes.ppu.pal[addr] = data & 0x3f;
-                    } else {
-                        nes.ppu.nametables[this.nametableMap[3]][addr & 0x3ff] = data;
-                    }
-                }
-            }
         }
     }
 

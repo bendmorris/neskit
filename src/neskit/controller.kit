@@ -1,26 +1,36 @@
-enum NesControllerButton {
-    // public static var buttons = [Up,Down,Left,Right,A,B,Select,Start];
-
-    A;
-    B;
-    Select;
-    Start;
-    Up;
-    Down;
-    Left;
-    Right;
-}
-
 struct NesController {
+    public static var A: Uint8 = 0;
+    public static var B: Uint8 = 1;
+    public static var Select: Uint8 = 2;
+    public static var Start: Uint8 = 3;
+    public static var Up: Uint8 = 4;
+    public static var Down: Uint8 = 5;
+    public static var Left: Uint8 = 6;
+    public static var Right: Uint8 = 7;
+
+    public static function new() {
+        return struct NesController {};
+    }
+
     public var active: Bool = true;
+    public var pressed: CArray[Bool, 8] = empty;
     var currentBtn = 0;
 
     public function latch() {
         this.currentBtn = 0;
     }
 
-    public function pop() {
-        // TODO
-        return 0;
+    public function pop(): Uint8 {
+        var val = this.pressed[this.currentBtn];
+        this.currentBtn = (this.currentBtn + 1) & 7;
+        return if val then 0x41 else 0x40;
+    }
+
+    public function clear(id: Uint8) {
+        this.pressed[id] = false;
+    }
+
+    public function press(id: Uint8) {
+        this.pressed[id] = true;
     }
 }

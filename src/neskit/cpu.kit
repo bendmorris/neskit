@@ -9,8 +9,8 @@ struct Cpu {
     public var cycleCount: Size = 0;
     public var nmi: Bool = false;
     public var pc: Uint16 = 0x8000;
-    public var dma: Uint8 = 0;
-    public var interrupt: Uint8 = 0;
+    public var dma: Uint16 = 0;
+    public var interrupt: Uint16 = 0;
 
     var nmiQueued: Bool = false;
     var prevNmi: Bool = false;
@@ -45,19 +45,18 @@ struct Cpu {
     }
 
     public function runFrame(nes: Ptr[Nes]) using implicit nes {
-        var ppu = nes.ppu;
-        ppu.stolenCycles = 0;
-        while !ppu.finished {
+        nes.ppu.stolenCycles = 0;
+        while !nes.ppu.finished {
             this.runCycle();
 
-            var projScanline = (ppu.scanline + (ppu.cycles + (this.cycles * 3)) / 340) as Uint8;
-            if projScanline > ppu.scanline || projScanline == 241 {
+            var projScanline = (nes.ppu.scanline + (nes.ppu.cycles + (this.cycles * 3)) / 340) as Uint8;
+            if projScanline > nes.ppu.scanline || projScanline == 241 {
                 // yield control to the the PPU to catch up to this clock; this
                 // happens when the PPU has been modified or at end of each scanline
-                ppu.catchUp();
+                nes.ppu.catchUp();
             }
         }
-        ppu.finished = false;
+        nes.ppu.finished = false;
     }
 
     /**
@@ -96,7 +95,8 @@ struct Cpu {
         } else {
             this.interruptDelay = false;
 
-            var byte = this.readpc() as Uint8;
+            var byte = this.readpc();
+            // printf("PC:%.4x OP:%.2x SP:%.2x A:%.2x X:%.2x Y:%.2x\n", this.pc - 1, byte, this.sp, this.a, this.x, this.y);
 
             // previously these used a bit more abstraction, but the opcode
             // dispatch table has been completely inlined for efficiency
@@ -330,7 +330,8 @@ struct Cpu {
             else if byte == 0xad {
                 // LDA
                 this.ticks += 4;
-                this.a = this.read(this.abs());
+                this.abs();
+                this.a = this.read(this.address);
                 this.setFlags(this.a);
             }
             else if byte == 0xb1 {
@@ -591,7 +592,7 @@ struct Cpu {
                 // JSR
                 this.ticks += 6;
                 value = this.read(this.abs());
-                this.pushStack(this.pc - 1 >> 8);
+                this.pushStack((this.pc - 1) >> 8);
                 this.pushStack((this.pc - 1) & 0xff);
                 this.pc = this.address;
             }
@@ -599,14 +600,14 @@ struct Cpu {
                 // RTS
                 this.ticks += 6;
                 this.dummyRead(this.pc++);
-                this.pc = (this.popStack() | (this.popStack() << 8)) + 1;
+                this.pc = (this.popStack() | this.popStack() as Uint16 << 8) + 1;
             }
             else if byte == 0x40 {
                 // RTI
                 this.ticks += 6;
                 this.dummyRead(this.pc++);
                 this.popStatus();
-                this.pc = this.popStack() | (this.popStack() << 8);
+                this.pc = this.popStack() | (this.popStack() as Uint16 << 8);
             }
             else if byte == 0x06 {
                 // ASL
@@ -1088,7 +1089,7 @@ struct Cpu {
                 // RRA
                 this.ticks += 8;
                 value = this.read(this.inx());
-                this.write(this.address, this.rra(this.read(this.inx())));
+                this.write(this.address, this.rra(value));
             }
             else if byte == 0x67 {
                 // RRA
@@ -1432,7 +1433,7 @@ struct Cpu {
     }
 
     function cmp(cmpTo: Uint8, value: Uint8) {
-        var tmp = cmpTo - value;
+        var tmp: Int = cmpTo - value;
         if tmp < 0 {
             tmp += 0xff + 1;
         }
@@ -1443,7 +1444,7 @@ struct Cpu {
     }
 
     function adc(value: Uint8): Uint8 {
-        var tmp = value + this.a + (if this.cf then 1 else 0);
+        var tmp: Uint16 = value + this.a + (if this.cf then 1 else 0);
         this.cf = (tmp >> 8 != 0);
         this.of = (((this.a ^ value) & 0x80) == 0)
                 && (((this.a ^ tmp) & 0x80) != 0);
@@ -1455,7 +1456,7 @@ struct Cpu {
     }
 
     function sbc(value: Uint8): Uint8 {
-        var tmp = this.a - value - (if this.cf then 0 else 1);
+        var tmp: Uint16 = this.a - value - (if this.cf then 0 else 1);
         this.cf = (tmp >> 8 == 0);
         this.of = (((this.a ^ value) & 0x80) != 0)
                 && (((this.a ^ tmp) & 0x80) != 0);
@@ -1492,7 +1493,7 @@ struct Cpu {
 
     function slo(value: Uint8) {
         this.cf = value & 0x80 != 0;
-        value = (value << 1) & 0xff;
+        value <<= 1;
         this.a |= value;
         this.setFlags(this.a);
         return value;
@@ -1508,7 +1509,7 @@ struct Cpu {
 
     function dcp(value: Uint8) {
         value = (value - 1) & 0xff;
-        var tmp = this.a - value;
+        var tmp: Int = this.a - value;
         if tmp < 0 {
             tmp += 0xff + 1;
         }
@@ -1520,7 +1521,7 @@ struct Cpu {
 
     function ahx(nes: Ptr[Nes], addr: Uint16) using implicit nes {
         var value = (this.a & this.x & ((addr >> 8) + 1)) & 0xff;
-        var tmp = (addr - this.y) & 0xff;
+        var tmp: Int = (addr - this.y) & 0xff;
         if (this.y as Uint16) + tmp <= 0xff {
             this.write(addr, value);
         } else {
@@ -1528,23 +1529,23 @@ struct Cpu {
         }
     }
 
-    function imm(nes: Ptr[Nes]) using implicit nes {
+    function imm(nes: Ptr[Nes]): Uint16 using implicit nes {
         return this.address = this.readpc();
     }
 
-    function zpg(nes: Ptr[Nes]) using implicit nes {
+    function zpg(nes: Ptr[Nes]): Uint16 using implicit nes {
         return this.address = this.readpc();
     }
 
-    function zpx(nes: Ptr[Nes]) using implicit nes {
+    function zpx(nes: Ptr[Nes]): Uint16 using implicit nes {
         return this.address = (this.readpc() + this.x) & 0xff;
     }
 
-    function zpy(nes: Ptr[Nes]) using implicit nes {
+    function zpy(nes: Ptr[Nes]): Uint16 using implicit nes {
         return this.address = (this.readpc() + this.y) & 0xff;
     }
 
-    function rel(nes: Ptr[Nes]) using implicit nes {
+    function rel(nes: Ptr[Nes]): Uint16 using implicit nes {
         this.address = this.getSigned(this.readpc());
         this.address = (this.address + this.pc) & 0xffff;
         if (this.address & 0xff00) != (this.pc & 0xff00) {
@@ -1553,47 +1554,47 @@ struct Cpu {
         return this.address;
     }
 
-    function ind(nes: Ptr[Nes]) using implicit nes {
-        this.address = this.readpc() | (this.readpc() << 8);
+    function ind(nes: Ptr[Nes]): Uint16 using implicit nes {
+        this.address = this.readpc() | (this.readpc() as Uint16 << 8);
         var nextAddr = this.address + 1;
         if nextAddr & 0xff == 0 {
             nextAddr -= 0x0100;
         }
-        return this.address = ((this.read(this.address) & 0xff) | (this.read(nextAddr) << 8)) & 0xffff;
+        return this.address = (this.read(this.address) | (this.read(nextAddr) as Uint16 << 8));
     }
 
-    function inx(nes: Ptr[Nes]) using implicit nes {
+    function inx(nes: Ptr[Nes]): Uint16 using implicit nes {
         this.address = this.readpc();
         this.address += this.x;
         this.address &= 0xff;
-        return this.address = ((this.read(this.address) & 0xff) | (this.read((this.address+1) & 0xff) << 8)) & 0xffff;
+        return this.address = ((this.read(this.address) & 0xff) | (this.read((this.address+1) & 0xff) as Uint16 << 8));
     }
 
-    function iny(nes: Ptr[Nes]) using implicit nes {
+    function iny(nes: Ptr[Nes]): Uint16 using implicit nes {
         this.address = this.readpc();
-        return this.address = (((this.read(this.address) & 0xff) | (this.read((this.address + 1) & 0xff) << 8)) + this.y) & 0xffff;
+        return this.address = (((this.read(this.address) & 0xff) | (this.read((this.address + 1) & 0xff) as Uint16 << 8)) + this.y);
     }
 
-    function inyPb(nes: Ptr[Nes]) using implicit nes {
+    function inyPb(nes: Ptr[Nes]): Uint16 using implicit nes {
         this.address = this.readpc();
-        this.address = (this.read(this.address) & 0xff) | (this.read((this.address + 1) & 0xff) << 8);
+        this.address = (this.read(this.address) & 0xff) | (this.read((this.address + 1) & 0xff) as Uint16 << 8);
         // new page
         if this.address & 0xff00 != (this.address + this.y) & 0xff00 {
             ++this.ticks;
         }
-        return this.address = (this.address + this.y) & 0xffff;
+        return this.address = (this.address + this.y);
     }
 
-    function abs(nes: Ptr[Nes]) using implicit nes {
-        return this.address = (this.readpc() | (this.readpc() << 8)) & 0xffff;
+    function abs(nes: Ptr[Nes]): Uint16 using implicit nes {
+        return this.address = (this.readpc() | (this.readpc() as Uint16 << 8));
     }
 
-    function abx(nes: Ptr[Nes]) using implicit nes {
-        return this.address = ((this.readpc() | (this.readpc() << 8)) + this.x) & 0xffff;
+    function abx(nes: Ptr[Nes]): Uint16 using implicit nes {
+        return this.address = ((this.readpc() | (this.readpc() as Uint16 << 8)) + this.x);
     }
 
-    function abxPb(nes: Ptr[Nes]) using implicit nes {
-        this.address = this.readpc() | (this.readpc() << 8);
+    function abxPb(nes: Ptr[Nes]): Uint16 using implicit nes {
+        this.address = this.readpc() | (this.readpc() as Uint16 << 8);
         // new page
         if (this.address & 0xff00 != (this.address + this.x) & 0xff00) {
             ++this.ticks;
@@ -1601,12 +1602,12 @@ struct Cpu {
         return this.address = (this.address + this.x) & 0xffff;
     }
 
-    function aby(nes: Ptr[Nes]) using implicit nes {
-        return this.address = ((this.readpc() | (this.readpc() << 8)) + this.y) & 0xffff;
+    function aby(nes: Ptr[Nes]): Uint16 using implicit nes {
+        return this.address = (this.readpc() | (this.readpc() as Uint16 << 8)) + this.y;
     }
 
-    function abyPb(nes: Ptr[Nes]) using implicit nes {
-        this.address = this.readpc() | (this.readpc() << 8);
+    function abyPb(nes: Ptr[Nes]): Uint16 using implicit nes {
+        this.address = this.readpc() | (this.readpc() as Uint16 << 8);
         // new page
         if this.address & 0xff00 != (this.address + this.y) & 0xff00 {
             ++this.ticks;
@@ -1615,14 +1616,14 @@ struct Cpu {
     }
 
     function pushStack(nes: Ptr[Nes], value: Uint8) using implicit nes {
-        this.write(0x100 + (this.sp & 0xff), value);
+        this.write(0x100 + this.sp, value);
         this.sp--;
         this.sp &= 0xff;
     }
 
     function popStack(nes: Ptr[Nes]): Uint8 using implicit nes {
         ++this.sp;
-        this.sp &= 0xff;
+        // printf("pop stack %.4x\n", 0x100 + this.sp);
         return this.read(0x100 + this.sp);
     }
 
@@ -1642,6 +1643,7 @@ struct Cpu {
             (if this.of then 0x40 else 0) |
             (if this.nf then 0x80 else 0);
     }
+
     function setStatusFlag(val: Uint8) {
         this.cf = val & 0x1 != 0;
         this.zf = val & 0x2 != 0;
@@ -1656,10 +1658,12 @@ struct Cpu {
 
     function read(nes: Ptr[Nes], addr: Uint16): Uint8 using implicit nes {
         this.tick(1);
-        return nes.ram.read(addr & 0xffff) & 0xff;
+        var val = nes.ram.read(addr);
+        // printf("READ: %.4x = %.2x\n", addr, val);
+        return val;
     }
 
-    function readpc(nes: Ptr[Nes]) using implicit nes {
+    function readpc(nes: Ptr[Nes]): Uint8 using implicit nes {
         return this.read(this.pc++);
     }
 
@@ -1667,25 +1671,26 @@ struct Cpu {
         this.read(addr);
     }
 
-    function write(nes: Ptr[Nes], addr: Uint16, data: Uint8) using implicit nes {
+    function write(nes: Ptr[Nes], addr: Uint16, val: Uint8) using implicit nes {
         this.tick(1);
-        nes.ram.write(addr & 0xffff, data & 0xff);
+        // printf("WRITE: %.4x = %.2x\n", addr, val);
+        nes.ram.write(addr, val);
     }
 
     function doNmi(nes: Ptr[Nes]) using implicit nes {
         this.pushStack(this.pc >> 8);
         this.pushStack(this.pc & 0xff);
         this.pushStack(this.getStatusFlag());
-        this.pc = this.read(0xfffa) | (this.read(0xfffb) << 8);
+        this.pc = this.read(0xfffa) | (this.read(0xfffb) as Uint16 << 8);
         this.addTicks(7);
         this.id = true;
     }
 
     function doInterrupt(nes: Ptr[Nes]) using implicit nes {
-        this.pushStack(this.pc >> 8); // high bit 1st
-        this.pushStack((this.pc) & 0xff);// check that this pushes right this.address
+        this.pushStack(this.pc >> 8);
+        this.pushStack((this.pc) & 0xff);
         this.pushStack(this.getStatusFlag());
-        this.pc = this.read(0xfffe) | (this.read(0xffff) << 8);
+        this.pc = this.read(0xfffe) | (this.read(0xffff) as Uint16 << 8);
         this.id = true;
     }
 
@@ -1694,7 +1699,7 @@ struct Cpu {
         this.pushStack(this.pc >> 8); // high bit 1st
         this.pushStack(this.pc & 0xff); // check that this pushes right this.address
         this.pushStatus();
-        this.pc = this.read(0xfffe) | (this.read(0xffff)  << 8);
+        this.pc = this.read(0xfffe) | (this.read(0xffff) as Uint16 << 8);
         this.id = true;
     }
 
@@ -1721,7 +1726,8 @@ struct Cpu {
         this.nf = value & 0x80 == 0x80;
     }
 
-    function getSigned(byte: Uint8): Uint8 {
+    function getSigned(byte: Uint8): Int16 {
         return if (byte & 0x80) != 0 then -((~(byte - 1)) & 0xff) else byte;
+        // return byte as Int8;
     }
 }

@@ -1,8 +1,8 @@
-function getbit(val: Uint8, pos: Uint8): Bool {
+function getbit(val: Uint, pos: Uint8): Bool {
     return (val & (1 << pos)) != 0;
 }
 
-function getbiti(val: Uint8, pos: Uint8): Uint8 {
+function getbiti(val: Uint, pos: Uint8): Uint8 {
     return (val >> pos) & 1;
 }
 

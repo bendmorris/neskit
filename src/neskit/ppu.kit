@@ -1,3 +1,4 @@
+import neskit.mirror;
 import neskit.nes;
 import neskit.palette;
 
@@ -22,30 +23,28 @@ struct Ppu {
 
     public var oam: CArray[Uint8, 0x100] = empty;
     public var nametables: CArray[CArray[Uint8, 0x400], 4] = empty;
-    public var pal: CArray[Uint8, 32] = empty;
+    public var pal: CArray[Uint8, 0x20] = empty;
 
-    public var scanline: Uint8 = 0;
-    public var cycles: Int = 1;
+    public var scanline: Uint16 = 0;
+    public var cycles: Size = 1;
 
     public var pixels: CArray[Uint32, 61440] = empty;
 
-    var vramAddr: Int = 0;
-    var vramAddrTemp: Int = 0;
+    var vramAddr: Uint16 = 0;
+    var vramAddrTemp: Uint16 = 0;
     var xScroll: Int = 0;
     var even = true;
 
-    var bgPatternAddr = 0x1000;
-    var sprPatternAddr = 0;
+    var bgPatternAddr: Uint16 = 0x1000;
+    var sprPatternAddr: Uint16 = 0;
+    var oamAddr: Uint8 = 0;
 
-    var oamAddr: Int = 0;
-
-    var bgShiftRegH: Int = 0;
-    var bgShiftRegL: Int = 0;
-    var bgAttrShiftRegH: Int = 0;
-    var bgAttrShiftRegL: Int = 0;
+    var bgShiftRegH: Uint16 = 0;
+    var bgShiftRegL: Uint16 = 0;
+    var bgAttrShiftRegH: Uint8 = 0;
+    var bgAttrShiftRegL: Uint8 = 0;
     // $2000 PPUCTRL registers
     var nmiEnabled: Bool = false;
-    var ntAddr: Int = 0;
     var vramInc: Int = 1;
     var tallSprites: Bool = false;
     // $2001 PPUMASK registers
@@ -61,39 +60,126 @@ struct Ppu {
     var vblank: Bool = false;
 
     var spriteBgFlags: CArray[Bool, 8] = empty;
-    var spriteShiftRegH: CArray[Int, 8] = empty;
-    var spriteShiftRegL: CArray[Int, 8] = empty;
-    var spriteXlatch: CArray[Int, 8] = empty;
-    var spritepals: CArray[Int, 8] = empty;
-    var openBus: Int = 0;
-    var openBusDecayH: Int = 0;
-    var openBusDecayL: Int = 0;
-    var readBuffer: Int = 0;
-    var tileAddr: Int = 0;
-    var tileL: Int = 0;
-    var tileH: Int = 0;
-    var attr: Int = 0;
-    var attrH: Int = 0;
-    var attrL: Int = 0;
+    var spriteShiftRegH: CArray[Uint8, 8] = empty;
+    var spriteShiftRegL: CArray[Uint8, 8] = empty;
+    var spriteXlatch: CArray[Uint8, 8] = empty;
+    var spritepals: CArray[Uint8, 8] = empty;
+    var openBus: Uint8 = 0;
+    var openBusDecayH: Uint32 = 0;
+    var openBusDecayL: Uint32 = 0;
+    var readBuffer: Uint16 = 0;
+    var tileAddr: Uint16 = 0;
+    var tileL: Uint16 = 0;
+    var tileH: Uint16 = 0;
+    var attr: Uint16 = 0;
+    var attrH: Uint8 = 0;
+    var attrL: Uint8 = 0;
 
-    var off: Int = 0;
-    var index: Int = 0;
-    var sprpxl: Int = 0;
     var found: Int = 0;
     var sprite0here: Bool = false;
     var suppress: Bool = false;
+
+    var nametableMap: CArray[Uint8, 4] = empty;
+    var chrMap: CArray[Uint16, 8] = empty;
 
     public function isEnabled() {
         return this.bgRender || this.sprRender;
     }
 
-    public function read(nes: Ptr[Nes], addr: Uint32): Uint8 using implicit nes
-    {
-        this.catchUp();
-        var result: Uint8 = 0;
+    public function init(nes: Ptr[Nes]) {
+        for i in 0 ... 8 {
+            this.chrMap[i] = (0x400 * i) & (nes.rom.chrSize - 1);
+        }
+        this.setMirror(nes.rom.mirror);
+    }
 
-        match addr
-        {
+    public function setMirror(m: MirrorMode) {
+        match m {
+            H_MIRROR => {
+                this.nametableMap = [0, 0, 1, 1];
+            }
+            V_MIRROR => {
+                this.nametableMap = [0, 1, 0, 1];
+            }
+            SS_MIRROR0 => {
+                this.nametableMap = [0, 0, 0, 0];
+            }
+            SS_MIRROR1 => {
+                this.nametableMap = [1, 1, 1, 1];
+            }
+            FOUR_SCREEN_MIRROR => {
+                this.nametableMap = [0, 1, 2, 3];
+            }
+        }
+    }
+
+    public function read(nes: Ptr[Nes], addr: Uint16): Uint8 using implicit nes {
+        var _readResult: Uint8;
+        if addr < 0x2000 {
+            _readResult = nes.rom.chr[this.chrMap[addr >> 10] + (addr & 1023)];
+        } else {
+            match addr & 0xc00 {
+                0 => {
+                    _readResult = this.nametables[this.nametableMap[0]][addr & 0x3ff];
+                }
+                0x400 => {
+                    _readResult = this.nametables[this.nametableMap[1]][addr & 0x3ff];
+                }
+                0x800 => {
+                    _readResult = this.nametables[this.nametableMap[2]][addr & 0x3ff];
+                }
+                default => {
+                    if addr >= 0x3f00 {
+                        addr &= 0x1f;
+                        if addr >= 0x10 && ((addr & 3) == 0) {
+                            addr -= 0x10;
+                        }
+                        _readResult = this.pal[addr];
+                    } else {
+                        _readResult = this.nametables[this.nametableMap[3]][addr & 0x3ff];
+                    }
+                }
+            }
+        }
+        return _readResult;
+    }
+
+    public function write(nes: Ptr[Nes], addr: Int, data: Int) using implicit nes {
+        if (addr < 0x2000) {
+            nes.rom.chr[this.chrMap[addr >> 10] + (addr & 0x3ff)] = data;
+        } else {
+            match addr & 0xc00
+            {
+                0x0 => {
+                    this.nametables[this.nametableMap[0]][addr & 0x3ff] = data;
+                }
+                0x400 => {
+                    this.nametables[this.nametableMap[1]][addr & 0x3ff] = data;
+                }
+                0x800 => {
+                    this.nametables[this.nametableMap[2]][addr & 0x3ff] = data;
+                }
+                default => {
+                    if addr >= 0x3f00 {
+                        addr &= 0x1f;
+                        if (addr >= 0x10 && ((addr & 3) == 0))
+                        {
+                            // mirrors
+                            addr -= 0x10;
+                        }
+                        this.pal[addr] = data & 0x3f;
+                    } else {
+                        this.nametables[this.nametableMap[3]][addr & 0x3ff] = data;
+                    }
+                }
+            }
+        }
+    }
+
+    public function regRead(nes: Ptr[Nes], addr: Uint8): Uint8 using implicit nes {
+        this.catchUp();
+
+        match addr {
             2 => {
                 if this.scanline == 241 {
                     if this.cycles < 4 {
@@ -127,10 +213,10 @@ struct Ppu {
                 // unless reading from sprite memory
                 if (this.vramAddr & 0x3fff) < 0x3f00 {
                     this.openBus = this.readBuffer;
-                    this.readBuffer = nes.mapper.ppuRead(this.vramAddr & 0x3fff);
+                    this.readBuffer = this.read(this.vramAddr & 0x3fff);
                 } else {
-                    this.openBus = (this.openBus & 0xc0) | (nes.mapper.ppuRead(this.vramAddr) & 0x3f);
-                    this.readBuffer = nes.mapper.ppuRead((this.vramAddr & 0x3fff) - 0x1000);
+                    this.openBus = (this.openBus & 0xc0) | (this.read(this.vramAddr) & 0x3f);
+                    this.readBuffer = this.read((this.vramAddr & 0x3fff) - 0x1000);
                 }
                 this.openBusDecayH = this.openBusDecayL = Self.OPEN_BUS_DECAY_CYCLES;
                 if !this.isEnabled() || (this.scanline > 240 && this.scanline < 261) {
@@ -147,17 +233,17 @@ struct Ppu {
         return this.openBus;
     }
 
-    public function write(nes: Ptr[Nes], addr: Uint32, data: Uint8) using implicit nes {
+    public function regWrite(nes: Ptr[Nes], addr: Uint16, data: Uint8) using implicit nes {
+        // printf("ppu write %.4x %.2x\n", addr, data);
         this.catchUp();
         this.openBus = data;
         this.openBusDecayH = this.openBusDecayL = Self.OPEN_BUS_DECAY_CYCLES;
 
-        match addr
-        {
+        match addr {
             0 => {
                 // PPUCTRL
                 this.vramAddrTemp &= ~0xc00;
-                this.vramAddrTemp += (data & 3) << 10;
+                this.vramAddrTemp += (data & 3) as Uint16 << 10;
                 this.vramInc = if getbit(data, 2) then 0x20 else 1;
                 this.sprPatternAddr = if getbit(data, 3) then 0x1000 else 0;
                 this.bgPatternAddr = if getbit(data, 4) then 0x1000 else 0;
@@ -179,12 +265,12 @@ struct Ppu {
             }
             3 => {
                 // OAMADDR
-                this.oamAddr = data & 0xff;
+                this.oamAddr = data;
             }
             4 => {
                 // OAMDATA
+                // printf("OAM: %.2x = %.2x\n", this.oamAddr, data);
                 this.oam[this.oamAddr++] = data;
-                this.oamAddr &= 0xff;
             }
             5 => {
                 // PPUSCROLL
@@ -197,9 +283,9 @@ struct Ppu {
                 } else {
                     // update vertical scroll
                     this.vramAddrTemp &= ~0x7000;
-                    this.vramAddrTemp |= ((data & 7) << 12);
+                    this.vramAddrTemp |= ((data as Uint16 & 7) << 12);
                     this.vramAddrTemp &= ~0x3e0;
-                    this.vramAddrTemp |= (data & 0xf8) << 2;
+                    this.vramAddrTemp |= (data as Uint16 & 0xf8) << 2;
                     this.even = true;
                 }
             }
@@ -209,7 +295,7 @@ struct Ppu {
                 {
                     // high byte
                     this.vramAddrTemp &= 0xff;
-                    this.vramAddrTemp |= ((data & 0x3f) << 8);
+                    this.vramAddrTemp |= ((data as Uint16 & 0x3f) << 8);
                     this.even = false;
                 } else {
                     this.vramAddrTemp &= 0x7f00;
@@ -220,17 +306,13 @@ struct Ppu {
             }
             7 => {
                 // PPUDATA: write to location specified by vramAddr
-                nes.mapper.ppuWrite(this.vramAddr & 0x3fff, data);
-                if (!this.isEnabled() || (this.scanline > 240 && this.scanline < 261))
-                {
+                this.write(this.vramAddr & 0x3fff, data);
+                if !this.isEnabled() || (this.scanline > 240 && this.scanline < 261) {
                     this.vramAddr += this.vramInc;
-                }
-                else
-                {
+                } else {
                     // if 2007 is read during rendering PPU increments both horiz
                     // and vert counters erroneously.
-                    if (((this.cycles - 1) & 7) != 7)
-                    {
+                    if ((this.cycles - 1) & 7) != 7 {
                         this.incrementX();
                         this.incrementY();
                     }
@@ -272,8 +354,7 @@ struct Ppu {
         this.stolenCycles -= nes.cpu.cycles;
     }
 
-    public function clock(nes: Ptr[Nes]) using implicit nes
-    {
+    public function clock(nes: Ptr[Nes]) using implicit nes {
         var enabled = this.isEnabled();
 
         if this.suppress {
@@ -283,21 +364,21 @@ struct Ppu {
 
         if this.scanline < 240 || this.scanline == 261 {
             // visible scanlines
-            if (enabled
+            if enabled
                 && ((this.cycles >= 1 && this.cycles <= 256)
-                || (this.cycles >= 321 && this.cycles <= 336)))
+                || (this.cycles >= 321 && this.cycles <= 336))
             {
                 // fetch background tiles, load shift registers
                 this.bgFetch();
-            } else if (this.cycles == 257 && enabled) {
+            } else if this.cycles == 257 && enabled {
                 // horizontal bits of vramAddr = vramAddrTemp
-                this.vramAddr &= ~0x41f;
+                this.vramAddr &= ~0x41f as Uint16;
                 this.vramAddr |= this.vramAddrTemp & 0x41f;
-            } else if (this.cycles > 257 && this.cycles <= 341) {
+            } else if this.cycles > 257 && this.cycles <= 341 {
                 // clear the oam address from pxls 257-341 continuously
                 this.oamAddr = 0;
             }
-            if ((this.cycles == 340) && enabled) {
+            if (this.cycles == 340) && enabled {
                 // read the same nametable byte twice
                 // this signals the MMC5 to increment the scanline counter
                 this.fetchNTByte();
@@ -306,53 +387,45 @@ struct Ppu {
             if this.cycles == 260 && enabled {
                 this.evalSprites();
             }
-            if (this.scanline == 261) {
-                if (this.cycles == 1)
-                {
+            if this.scanline == 261 {
+                if this.cycles == 1 {
                     // turn off vblank, sprite 0, sprite overflow flags
                     this.vblank = this.sprite0 = this.spriteOverflow = false;
                 }
-                else if (this.cycles >= 280 && this.cycles <= 304 && enabled)
+                else if this.cycles >= 280 && this.cycles <= 304 && enabled
                 {
                     this.vramAddr = this.vramAddrTemp;
                 }
             }
-        } else if (this.scanline == 241 && this.cycles == 1) {
+        } else if this.scanline == 241 && this.cycles == 1 {
             this.vblank = true;
         }
 
         if this.scanline < 240 {
-            if (this.cycles >= 1 && this.cycles <= 256)
-            {
-                var bufferOffset = (this.scanline << 8) + (this.cycles - 1);
+            if this.cycles >= 1 && this.cycles <= 256 {
+                var bufferOffset = (this.scanline as Uint32 << 8) + (this.cycles - 1);
                 // bg drawing
                 if this.bgRender {
                     var isBG = this.drawBGPixel(bufferOffset);
-                    this.drawSprites(this.scanline << 8, this.cycles - 1, isBG);
+                    this.drawSprites(this.scanline as Uint32 << 8, this.cycles - 1, isBG);
                 } else {
                     // rendering is off; draw either the background color or
                     // if the PPU address points to the palette, draw that color
-                    var bgcolor = if (this.vramAddr > 0x3f00 && this.vramAddr < 0x3fff) then nes.mapper.ppuRead(this.vramAddr) else this.pal[0];
+                    var bgcolor = if (this.vramAddr > 0x3f00 && this.vramAddr < 0x3fff) then this.read(this.vramAddr) else this.pal[0];
                     this.pset(bufferOffset, bgcolor);
                 }
             }
         }
 
-        this.signalNMI();
+        nes.cpu.nmi = this.vblank && this.nmiEnabled;
 
         // open bus value decay
-        if (this.openBusDecayH > 0 && --this.openBusDecayH == 0)
-        {
+        if this.openBusDecayH > 0 && --this.openBusDecayH == 0 {
             this.openBus &= 0x1f;
         }
-        if (this.openBusDecayL > 0 && --this.openBusDecayL == 0)
-        {
+        if this.openBusDecayL > 0 && --this.openBusDecayL == 0 {
             this.openBus &= 0xe0;
         }
-    }
-
-    function signalNMI(nes: Ptr[Nes]) using implicit nes {
-        nes.cpu.nmi = this.vblank && this.nmiEnabled;
     }
 
     function incrementY() {
@@ -373,19 +446,15 @@ struct Ppu {
         }
     }
 
-    function incrementX()
-    {
+    function incrementX() {
         // increment horizontal part of vramAddr
         // if coarse X == 31
-        if ((this.vramAddr & 0x001F) == 31)
-        {
+        if (this.vramAddr & 0x001F) == 31 {
             // coarse X = 0
             this.vramAddr &= ~0x001F;
             // switch horizontal nametable
             this.vramAddr ^= 0x0400;
-        }
-        else
-        {
+        } else {
             // increment coarse X
             ++this.vramAddr;
         }
@@ -410,11 +479,11 @@ struct Ppu {
             }
             5 => {
                 // fetch low bg byte
-                this.tileL = nes.mapper.ppuRead((this.tileAddr) + ((this.vramAddr & 0x7000) >> 12)) & 0xff;
+                this.tileL = this.read((this.tileAddr) + ((this.vramAddr & 0x7000) >> 12));
             }
             7 => {
                 // fetch high bg byte
-                this.tileH = nes.mapper.ppuRead((this.tileAddr) + ((this.vramAddr & 0x7000) >> 12) + 8) & 0xff;
+                this.tileH = this.read((this.tileAddr) + ((this.vramAddr & 0x7000) >> 12) + 8);
 
                 this.bgShiftRegH |= this.tileH;
                 this.bgShiftRegL |= this.tileL;
@@ -433,22 +502,22 @@ struct Ppu {
     }
 
     function fetchNTByte(nes: Ptr[Nes]) using implicit nes {
-        this.tileAddr = (nes.mapper.ppuRead(((this.vramAddr & 0xc00) | 0x2000) + (this.vramAddr & 0x3ff)) << 4) + this.bgPatternAddr;
+        this.tileAddr = (this.read(((this.vramAddr & 0xc00) | 0x2000) + (this.vramAddr & 0x3ff)) << 4) + this.bgPatternAddr;
     }
 
-    function drawBGPixel(nes: Ptr[Nes], bufferOffset: Int): Bool using implicit nes {
+    function drawBGPixel(nes: Ptr[Nes], bufferOffset: Uint32): Bool using implicit nes {
         var isBG: Bool;
         if !this.bgClip && (bufferOffset & 0xff) < 8 {
             // left clip
             this.pset(bufferOffset, this.pal[0]);
             isBG = true;
         } else {
-            var bgPix = (getbiti(this.bgShiftRegH, 16 - this.xScroll) << 1)
-                    + getbiti(this.bgShiftRegL, 16 - this.xScroll);
-            var bgPal = (getbiti(this.bgAttrShiftRegH, 8 - this.xScroll) << 1)
-                    + getbiti(this.bgAttrShiftRegL, 8 - this.xScroll);
+            var bgPix = (getbiti(this.bgShiftRegH, 15 - this.xScroll) << 1)
+                    + getbiti(this.bgShiftRegL, 15 - this.xScroll);
+            var bgPal = (getbiti(this.bgAttrShiftRegH, 7 - this.xScroll) << 1)
+                    + getbiti(this.bgAttrShiftRegL, 7 - this.xScroll);
             isBG = bgPix == 0;
-            this.pset(bufferOffset, if isBG then this.pal[0] else (this.pal[bgPal << 2] + bgPix));
+            this.pset(bufferOffset, if isBG then this.pal[0] else this.pal[(bgPal << 2) + bgPix]);
         }
         return isBG;
     }
@@ -476,8 +545,7 @@ struct Ppu {
             // for each sprite, first we cull the non-visible ones
             ypos = this.oam[spritestart];
             offset = this.scanline - ypos;
-            if (ypos > this.scanline || ypos > 254 || offset > (if this.tallSprites then 15 else 7))
-            {
+            if ypos > this.scanline || ypos > 254 || offset > (if this.tallSprites then 15 else 7) {
                 // sprite is out of range vertically
                 spritestart += 4;
                 continue;
@@ -517,20 +585,17 @@ struct Ppu {
 
             spritestart += 4;
         }
-        for i in this.found ... 8
-        {
+        for i in this.found ... 8 {
             // fill unused sprite registers with zeros
             this.spriteShiftRegL[i] = 0;
             this.spriteShiftRegH[i] = 0;
         }
     }
 
-    function spriteFetch(nes: Ptr[Nes], tilenum: Int, offset: Int, oamextra: Int) using implicit nes
-    {
+    function spriteFetch(nes: Ptr[Nes], tilenum: Int, offset: Int, oamextra: Int) using implicit nes {
         var tilefetched: Int;
         if this.tallSprites {
-            tilefetched = ((tilenum & 1) * 0x1000)
-                    + (tilenum & 0xfe) * 16;
+            tilefetched = ((tilenum & 1) * 0x1000) + (tilenum & 0xfe) * 16;
         } else {
             tilefetched = tilenum * 16 + this.sprPatternAddr;
         }
@@ -538,52 +603,53 @@ struct Ppu {
         // load sprite shift registers
         var hflip:Bool = getbit(oamextra, 6);
         if !hflip {
-            this.spriteShiftRegL[this.found] = reverseByte(nes.mapper.ppuRead(tilefetched));
-            this.spriteShiftRegH[this.found] = reverseByte(nes.mapper.ppuRead(tilefetched + 8));
+            this.spriteShiftRegL[this.found] = reverseByte(this.read(tilefetched));
+            this.spriteShiftRegH[this.found] = reverseByte(this.read(tilefetched + 8));
         } else {
-            this.spriteShiftRegL[this.found] = nes.mapper.ppuRead(tilefetched);
-            this.spriteShiftRegH[this.found] = nes.mapper.ppuRead(tilefetched + 8);
+            this.spriteShiftRegL[this.found] = this.read(tilefetched);
+            this.spriteShiftRegH[this.found] = this.read(tilefetched + 8);
         }
     }
 
     /**
      * draws appropriate lines of the sprites selected by sprite evaluation
      */
-    function drawSprites(bufferOffset: Int, x: Int, bgflag: Bool) {
+    function drawSprites(bufferOffset: Uint32, x: Int, bgflag: Bool) {
         //sprite left 8 pixels clip
-        var startdraw = if this.sprClip then 0 else 8;
-        this.sprpxl = 0;
-        this.index = 7;
+        var startdraw: Int = if this.sprClip then 0 else 8;
+        var off: Int = 0;
+        var sprpxl: Int = 0;
+        var index: Int = 7;
 
-        var y = this.found - 1;
+        var y: Int = this.found - 1;
         while y >= 0 {
-            this.off = x - this.spriteXlatch[y];
-            if this.off >= 0 && this.off <= 8 {
+            off = x - this.spriteXlatch[y];
+            if off >= 0 && off <= 8 {
                 if (this.spriteShiftRegH[y] & 1) + (this.spriteShiftRegL[y] & 1) != 0 {
-                    this.index = y;
-                    this.sprpxl = 2 * (this.spriteShiftRegH[y] & 1) + (this.spriteShiftRegL[y] & 1);
+                    index = y;
+                    sprpxl = 2 * (this.spriteShiftRegH[y] & 1) + (this.spriteShiftRegL[y] & 1);
                 }
                 this.spriteShiftRegH[y] >>= 1;
                 this.spriteShiftRegL[y] >>= 1;
             }
             --y;
         }
-        if this.sprpxl == 0 || x < startdraw || !this.sprRender {
+        this.sprite0 = this.sprite0here;
+        if sprpxl == 0 || x < startdraw || !this.sprRender {
             // no opaque sprite pixel here
         } else {
-            if this.sprite0here && (this.index == 0) && !bgflag && x < 255 {
+            if this.sprite0here && (index == 0) && !bgflag && x < 255 {
                 // sprite 0 hit
                 this.sprite0 = true;
             }
-            if !this.spriteBgFlags[this.index] || bgflag
-            {
-                this.pset(bufferOffset + x, this.pal[this.spritepals[this.index] + this.sprpxl]);
+            if !this.spriteBgFlags[index] || bgflag {
+                this.pset(bufferOffset + x, this.pal[this.spritepals[index] + sprpxl]);
             }
         }
     }
 
-    function getAttribute(nes: Ptr[Nes], ntstart: Int, tileX: Int, tileY: Int) using implicit nes {
-        var base = nes.mapper.ppuRead(ntstart + (tileX >> 2) + 8 * (tileY >> 2));
+    function getAttribute(nes: Ptr[Nes], ntstart: Uint16, tileX: Uint8, tileY: Uint8) using implicit nes {
+        var base = this.read(ntstart + (tileX >> 2) + 8 * (tileY >> 2));
         if getbit(tileY, 1) {
             if getbit(tileX, 1) {
                 return (base >> 6) & 3;
@@ -599,13 +665,14 @@ struct Ppu {
         }
     }
 
-    function pset(addr: Uint32, value: Uint8) {
+    function pset(offset: Uint32, value: Uint8) {
         // greyscale
         if this.greyscale {
             value &= 0x30;
         }
         // color emphasis
         value = (value & 0x3f) | this.emph;
-        this.pixels[addr] = Palette.getColor(value);
+        // printf("%u %u %.6x\n", offset % 256, offset / 256 as Uint16, Palette.getColor(value) & 0xffffff);
+        this.pixels[offset] = Palette.getColor(value);
     }
 }

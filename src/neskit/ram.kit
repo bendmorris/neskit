@@ -6,27 +6,26 @@ struct Ram {
 
     public static function new() {
         var ram: Ram;
+        ram.reset();
         return ram;
     }
 
     public function reset() {
-        for i in 0 ... 0x800
-        {
+        for i in 0 ... this.mem.length {
             this.mem[i] = 0xff;
         }
     }
 
-    public function read(nes: Ptr[Nes], addr: Uint32): Uint8 using implicit nes {
+    public function read(nes: Ptr[Nes], addr: Uint16): Uint8 using implicit nes {
         if addr < 0x2000 {
             // RAM
             return this.mem[addr & 0x7ff];
         } else if addr > 0x4018 {
             // cartridge space
             return nes.mapper.read(addr);
-        }
-        else if addr < 0x4000 {
+        } else if addr < 0x4000 {
             // ppu, mirrored 7 bytes of io registers
-            return nes.ppu.read(addr & 7);
+            return nes.ppu.regRead(addr & 7);
         } else if addr == 0x4016 || addr == 0x4017 {
             // controller read
             var port = addr - 0x4016;
@@ -40,7 +39,7 @@ struct Ram {
         }
     }
 
-    public function write(nes: Ptr[Nes], addr: Uint32, data: Uint8) using implicit nes {
+    public function write(nes: Ptr[Nes], addr: Uint16, data: Uint8) using implicit nes {
         if addr < 0x2000 {
             // write to RAM (mirrored)
             this.mem[addr & 0x7ff] = data;
@@ -49,7 +48,7 @@ struct Ram {
             nes.mapper.write(addr, data);
         } else if addr < 0x4000 {
             // ppu, mirrored 7 bytes of io registers
-            nes.ppu.write(addr & 7, data);
+            nes.ppu.regWrite(addr & 7, data);
         } else if addr == 0x4014 {
             // sprite DMA
             this.dma(data);
@@ -66,14 +65,11 @@ struct Ram {
         }
     }
 
-    function dma(nes: Ptr[Nes], data: Uint8) using implicit nes
-    {
-        var start = (data << 8);
-        var i = start;
-        while (i < start + 256)
-        {
+    function dma(nes: Ptr[Nes], data: Uint8) using implicit nes {
+        var start: Uint = data << 8;
+        for i in 0 ... 0x100 {
             // shortcut, written to 0x2004
-            nes.ppu.write(4, this.read((i++) & 0xffff) & 0xff);
+            nes.ppu.regWrite(4, this.read(start + i));
         }
         this.dmaCounter = 2;
     }

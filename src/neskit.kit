@@ -1,3 +1,6 @@
+include "SDL2/SDL.h";
+
+import neskit.controller;
 import neskit.nes;
 import neskit.opcode;
 import neskit.palette;
@@ -24,10 +27,92 @@ function main(argc: Int, argv: CArray[CString]) {
     }
 
     // read rom
-    var rom: Rom;
-    var nes = Nes.new(rom);
-    nes.init();
+    var nes = Nes.new();
     nes.loadRom(argv[1]);
+    nes.init();
 
-    nes.runFrame();
+    nes.controllers[0].active = true;
+
+    SDL_Init(${SDL_INIT_VIDEO: Int});
+
+    var window = SDL_CreateWindow(
+        "neskit",
+        ${SDL_WINDOWPOS_UNDEFINED: Int},
+        ${SDL_WINDOWPOS_UNDEFINED: Int},
+        512, 488,
+        ${SDL_WINDOW_RESIZABLE: Int}
+    );
+    var renderer = SDL_CreateRenderer(window, -1, ${SDL_RENDERER_ACCELERATED: Int});
+    SDL_RenderSetLogicalSize(renderer, 256, 244);
+    var texture = SDL_CreateTexture(
+        renderer,
+        ${SDL_PIXELFORMAT_ARGB8888: Int},
+        ${SDL_TEXTUREACCESS_STATIC: Int},
+        256, 244
+    );
+
+    var frameTime = 1000 / 60;
+    var event: SDL_Event;
+    var running: Bool = true;
+    while running {
+        var startTime = SDL_GetTicks();
+
+        nes.runFrame();
+        SDL_RenderClear(renderer);
+        SDL_UpdateTexture(texture, null, nes.ppu.pixels, 256 * (sizeof Uint32));
+        SDL_RenderCopy(renderer, texture, null, null);
+        SDL_RenderPresent(renderer);
+
+        // printf("* * *");
+        // for i in 0 ... 256 {
+        //     if i % 16 == 0 {
+        //         for j in 0 ... 244 {
+        //             if j % 16 == 0 {
+        //                 printf("%.6x ", nes.ppu.pixels[j * 256 + i]);
+        //             }
+        //         }
+        //         printf("\n");
+        //     }
+        // }
+
+        while SDL_PollEvent(&event) != 0 {
+            match event.type {
+                ${SDL_QUIT: Int} => {
+                    running = false;
+                }
+                ${SDL_KEYUP: Int} => {
+                    nes.controllers[0].clear(keyBinding(event.key.keysym.sym));
+                }
+                ${SDL_KEYDOWN: Int} => {
+                    nes.controllers[0].press(keyBinding(event.key.keysym.sym));
+                }
+            }
+        }
+
+        var elapsed: Uint32 = SDL_GetTicks() - startTime;
+        // printf("frame elapsed time ms: %u\n", elapsed);
+        if elapsed < frameTime {
+            SDL_Delay((frameTime - elapsed) as Uint32);
+        }
+    }
+
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
+    printf("bye!\n");
+}
+
+function keyBinding(id: Uint8) {
+    match id {
+        ${SDLK_w: Int} => return NesController.Up;
+        ${SDLK_a: Int} => return NesController.Left;
+        ${SDLK_s: Int} => return NesController.Down;
+        ${SDLK_d: Int} => return NesController.Right;
+        ${SDLK_k: Int} => return NesController.B;
+        ${SDLK_l: Int} => return NesController.A;
+        ${SDLK_RETURN: Int} => return NesController.Start;
+        ${SDLK_BACKSLASH: Int} => return NesController.Select;
+    }
 }

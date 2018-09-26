@@ -5,7 +5,6 @@ import neskit.mapper;
 import neskit.ppu;
 import neskit.ram;
 import neskit.rom;
-import neskit.screenbuffer;
 
 struct Nes {
     public var apu: Apu;
@@ -15,7 +14,6 @@ struct Nes {
     public var rom: Rom;
     public var mapper: Mapper;
     public var controllers: CArray[NesController, 2] = empty;
-    // public var screenBuffer: Box[ScreenBuffer] = null;
 
     public static function new() {
         var cpu = Cpu.new();
@@ -28,29 +26,11 @@ struct Nes {
             apu,
             ppu,
             rom: empty,
-            mapper: empty
+            mapper: empty,
         };
+        nes.controllers[0] = NesController.new();
+        nes.controllers[1] = NesController.new();
         return nes;
-    }
-
-    public function init() using implicit this {
-        printf("NES: init\n");
-        this.ram.reset();
-
-        this.ram.write(0x0008, 0xf7);
-        this.ram.write(0x0009, 0xef);
-        this.ram.write(0x000a, 0xdf);
-        this.ram.write(0x000f, 0xbf);
-
-        for i in 0x4000 ...  0x4010
-        {
-            this.apu.write(i - 0x4000, 0);
-        }
-
-        this.apu.write(0x0015, 0);
-        this.apu.write(0x0017, 0);
-
-        // this.cpu.pc = (this.mapper.read(0xfffd) << 8) | this.mapper.read(0xfffc);
     }
 
     public function loadRom(path: CString) using implicit this {
@@ -58,16 +38,31 @@ struct Nes {
         var result = Rom.new(path);
         this.rom = result.unwrap();
         this.mapper = this.rom.getMapper();
+        this.mapper.init();
+        this.ppu.init();
+        this.cpu.pc = (this.mapper.read(0xfffd) as Uint16 << 8) | this.mapper.read(0xfffc);
     }
 
-    public function reset() {
-        printf("NES: reset\n");
-        using implicit this {
-            this.cpu.pc = (this.mapper.read(0xfffd) << 8) | this.mapper.read(0xfffc);
-            this.apu.write(0x0015, 0);
-            this.apu.write(0x0017, this.apu.read(0x0017));
-            this.cpu.id = true;
+    public function init() using implicit this {
+        printf("NES: init\n");
+        this.ram.reset();
+        this.ram.mem[0x0008] = 0xf7;
+        this.ram.mem[0x0009] = 0xef;
+        this.ram.mem[0x000a] = 0xdf;
+        this.ram.mem[0x000f] = 0xbf;
+        for i in 0x4000 ...  0x4010 {
+            this.apu.write(i - 0x4000, 0);
         }
+        this.apu.write(0x0015, 0);
+        this.apu.write(0x0017, 0);
+    }
+
+    public function reset() using implicit this {
+        printf("NES: reset\n");
+        this.cpu.pc = (this.mapper.read(0xfffd) as Uint16 << 8) | this.mapper.read(0xfffc);
+        this.apu.write(0x0015, 0);
+        this.apu.write(0x0017, this.apu.read(0x0017));
+        this.cpu.id = true;
     }
 
     public function runFrame() using implicit this {
