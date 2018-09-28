@@ -1,8 +1,9 @@
 include "SDL2/SDL.h";
 
+import kit.sys.utils;
+import neskit.apu;
 import neskit.controller;
 import neskit.nes;
-import neskit.opcode;
 import neskit.palette;
 import neskit.ppu;
 import neskit.rom;
@@ -10,12 +11,9 @@ import neskit.rom;
 function init() {
     // this won't be necessary once static initialization works correctly
 
-    Ppu.defaultPalette = [
-        0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D,
-        0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C, 0x09, 0x01, 0x34, 0x03,
-        0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08
-    ];
-    Palette.init();
+    Ppu._init();
+    Apu._init();
+    Palette._init();
 }
 
 function main(argc: Int, argv: CArray[CString]) {
@@ -33,7 +31,7 @@ function main(argc: Int, argv: CArray[CString]) {
 
     nes.controllers[0].active = true;
 
-    SDL_Init(${SDL_INIT_VIDEO: Int});
+    SDL_Init(${SDL_INIT_VIDEO: Int} | ${SDL_INIT_AUDIO: Int});
 
     var window = SDL_CreateWindow(
         "neskit",
@@ -51,13 +49,30 @@ function main(argc: Int, argv: CArray[CString]) {
         256, 244
     );
 
-    var frameTime = 1000 / 60;
+    var audioSpec: SDL_AudioSpec;
+    audioSpec.freq = 48000;
+    audioSpec.format = ${AUDIO_F32: Int};
+    audioSpec.channels = 1;
+    audioSpec.samples = 0x400;
+    // audioSpec.callback = fillSoundBuffer;
+    var audioDevice = SDL_OpenAudioDevice(null, 0, audioSpec, audioSpec, 0);
+    if audioDevice == 0 {
+        printf("couldn't start audio");
+        exit(1);
+    }
+    SDL_PauseAudioDevice(audioDevice, 0);
+
+    var frameTime = 1_f32 / 60;
     var event: SDL_Event;
     var running: Bool = true;
+    var lastRate: Float = 1_f32;
+    var lastStart = 0;
     while running {
-        var startTime = SDL_GetTicks();
+        var start = time();
+        lastRate = 1;//if lastStart == 0 then 1 else frameTime / (start - lastStart);
+        lastStart = start;
 
-        nes.runFrame();
+        nes.runFrame(lastRate);
         SDL_RenderClear(renderer);
         SDL_UpdateTexture(texture, null, nes.ppu.pixels, 256 * (sizeof Uint32));
         SDL_RenderCopy(renderer, texture, null, null);
@@ -75,6 +90,14 @@ function main(argc: Int, argv: CArray[CString]) {
         //     }
         // }
 
+        if nes.apu.buffer.length > 0 {
+            var queued = SDL_GetQueuedAudioSize(audioDevice);
+            if queued < 0x4000 {
+                SDL_QueueAudio(audioDevice, nes.apu.buffer.data as Ptr[Uint8], nes.apu.buffer.length * sizeof Float);
+            }
+            nes.apu.buffer.clear();
+        }
+
         while SDL_PollEvent(&event) != 0 {
             match event.type {
                 ${SDL_QUIT: Int} => {
@@ -89,13 +112,17 @@ function main(argc: Int, argv: CArray[CString]) {
             }
         }
 
-        var elapsed: Uint32 = SDL_GetTicks() - startTime;
-        // printf("frame elapsed time ms: %u\n", elapsed);
-        if elapsed < frameTime {
-            SDL_Delay((frameTime - elapsed) as Uint32);
-        }
+        var elapsed: Double;
+        // printf("frame elapsed time ms: %f\n", elapsed);
+        do {
+            elapsed = time() - lastStart;
+            if frameTime - elapsed > 0.01 {
+                sleep(frameTime - elapsed);
+            }
+        } while elapsed < frameTime;
     }
 
+    SDL_CloseAudioDevice(audioDevice);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
@@ -114,5 +141,14 @@ function keyBinding(id: Uint8) {
         ${SDLK_l: Int} => return NesController.A;
         ${SDLK_RETURN: Int} => return NesController.Start;
         ${SDLK_BACKSLASH: Int} => return NesController.Select;
+    }
+}
+
+function fillSoundBuffer(_apu: Ptr[Void], out: Ptr[Uint8], count: Int) {
+    var apu: Ptr[Apu] = _apu;
+    var floats: Ptr[Float] = out;
+    for i in 0 ... count / (sizeof Float) {
+        var sample = apu.buffer.pop();
+        floats[i] = sample;
     }
 }

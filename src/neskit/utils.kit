@@ -16,3 +16,7 @@ function reverseByte(b: Uint8): Uint8 {
         (((b >> 6) & 1) << 1) |
         (((b >> 7) & 1));
 }
+
+function lerp(a: Float, b: Float, t: Float): Float {
+    return t * a + (1 - t) * b;
+}

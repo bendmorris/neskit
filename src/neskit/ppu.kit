@@ -6,6 +6,14 @@ struct Ppu {
     public static var defaultPalette: CArray[Uint8, 32];
     static var OPEN_BUS_DECAY_CYCLES: Uint32 = 1000000;
 
+    public static function _init() {
+        Self.defaultPalette = [
+            0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D,
+            0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C, 0x09, 0x01, 0x34, 0x03,
+            0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08
+        ];
+    }
+
     public static function new() {
         var ppu = struct Ppu {};
         for i in 0 ... ppu.oam.length {
@@ -17,22 +25,22 @@ struct Ppu {
         return ppu;
     }
 
-    public var frameCount: Size = 1;
-    public var stolenCycles: Size = 0;
+    public var frameCount: Int = 1;
+    public var stolenCycles: Int = 0;
     public var finished: Bool = false;
 
     public var oam: CArray[Uint8, 0x100] = empty;
-    public var nametables: CArray[CArray[Uint8, 0x400], 4] = empty;
     public var pal: CArray[Uint8, 0x20] = empty;
+    public var nametables: CArray[Uint8, 0x1000] = empty;
 
-    public var scanline: Uint16 = 0;
-    public var cycles: Size = 1;
+    public var scanline: Int = 0;
+    public var cycles: Int = 1;
 
     public var pixels: CArray[Uint32, 61440] = empty;
 
     var vramAddr: Uint16 = 0;
     var vramAddrTemp: Uint16 = 0;
-    var xScroll: Int = 0;
+    var xScroll: Uint8 = 0;
     var even = true;
 
     var bgPatternAddr: Uint16 = 0x1000;
@@ -79,11 +87,14 @@ struct Ppu {
     var sprite0here: Bool = false;
     var suppress: Bool = false;
 
-    var nametableMap: CArray[Uint8, 4] = empty;
     var chrMap: CArray[Uint16, 8] = empty;
+    var nt0: Ptr[Uint8] = null;
+    var nt1: Ptr[Uint8] = null;
+    var nt2: Ptr[Uint8] = null;
+    var nt3: Ptr[Uint8] = null;
 
-    public function isEnabled() {
-        return this.bgRender || this.sprRender;
+    rules {
+        ($this.enabled) => $this.bgRender || $this.sprRender;
     }
 
     public function init(nes: Ptr[Nes]) {
@@ -96,19 +107,40 @@ struct Ppu {
     public function setMirror(m: MirrorMode) {
         match m {
             H_MIRROR => {
-                this.nametableMap = [0, 0, 1, 1];
+                var a = &(this.nametables)[0x0];
+                var b = &(this.nametables)[0x400];
+                this.nt0 = a;
+                this.nt1 = a;
+                this.nt2 = b;
+                this.nt3 = b;
             }
             V_MIRROR => {
-                this.nametableMap = [0, 1, 0, 1];
+                var a = &(this.nametables)[0x0];
+                var b = &(this.nametables)[0x400];
+                this.nt0 = a;
+                this.nt1 = b;
+                this.nt2 = a;
+                this.nt3 = b;
             }
             SS_MIRROR0 => {
-                this.nametableMap = [0, 0, 0, 0];
+                var a = &(this.nametables)[0x0];
+                this.nt0 = a;
+                this.nt1 = a;
+                this.nt2 = a;
+                this.nt3 = a;
             }
             SS_MIRROR1 => {
-                this.nametableMap = [1, 1, 1, 1];
+                var a = &(this.nametables)[0x400];
+                this.nt0 = a;
+                this.nt1 = a;
+                this.nt2 = a;
+                this.nt3 = a;
             }
             FOUR_SCREEN_MIRROR => {
-                this.nametableMap = [0, 1, 2, 3];
+                this.nt0 = &(this.nametables)[0x0];
+                this.nt1 = &(this.nametables)[0x400];
+                this.nt2 = &(this.nametables)[0x800];
+                this.nt3 = &(this.nametables)[0xc00];
             }
         }
     }
@@ -120,13 +152,13 @@ struct Ppu {
         } else {
             match addr & 0xc00 {
                 0 => {
-                    _readResult = this.nametables[this.nametableMap[0]][addr & 0x3ff];
+                    _readResult = this.nt0[addr & 0x3ff];
                 }
                 0x400 => {
-                    _readResult = this.nametables[this.nametableMap[1]][addr & 0x3ff];
+                    _readResult = this.nt1[addr & 0x3ff];
                 }
                 0x800 => {
-                    _readResult = this.nametables[this.nametableMap[2]][addr & 0x3ff];
+                    _readResult = this.nt2[addr & 0x3ff];
                 }
                 default => {
                     if addr >= 0x3f00 {
@@ -136,7 +168,7 @@ struct Ppu {
                         }
                         _readResult = this.pal[addr];
                     } else {
-                        _readResult = this.nametables[this.nametableMap[3]][addr & 0x3ff];
+                        _readResult = this.nt3[addr & 0x3ff];
                     }
                 }
             }
@@ -151,13 +183,13 @@ struct Ppu {
             match addr & 0xc00
             {
                 0x0 => {
-                    this.nametables[this.nametableMap[0]][addr & 0x3ff] = data;
+                    this.nt0[addr & 0x3ff] = data;
                 }
                 0x400 => {
-                    this.nametables[this.nametableMap[1]][addr & 0x3ff] = data;
+                    this.nt1[addr & 0x3ff] = data;
                 }
                 0x800 => {
-                    this.nametables[this.nametableMap[2]][addr & 0x3ff] = data;
+                    this.nt2[addr & 0x3ff] = data;
                 }
                 default => {
                     if addr >= 0x3f00 {
@@ -169,7 +201,7 @@ struct Ppu {
                         }
                         this.pal[addr] = data & 0x3f;
                     } else {
-                        this.nametables[this.nametableMap[3]][addr & 0x3ff] = data;
+                        this.nt3[addr & 0x3ff] = data;
                     }
                 }
             }
@@ -219,7 +251,7 @@ struct Ppu {
                     this.readBuffer = this.read((this.vramAddr & 0x3fff) - 0x1000);
                 }
                 this.openBusDecayH = this.openBusDecayL = Self.OPEN_BUS_DECAY_CYCLES;
-                if !this.isEnabled() || (this.scanline > 240 && this.scanline < 261) {
+                if !this.enabled || (this.scanline > 240 && this.scanline < 261) {
                     this.vramAddr += this.vramInc;
                 } else {
                     this.incrementX();
@@ -283,7 +315,7 @@ struct Ppu {
                 } else {
                     // update vertical scroll
                     this.vramAddrTemp &= ~0x7000;
-                    this.vramAddrTemp |= ((data as Uint16 & 7) << 12);
+                    this.vramAddrTemp |= (data as Uint16 & 7) << 12;
                     this.vramAddrTemp &= ~0x3e0;
                     this.vramAddrTemp |= (data as Uint16 & 0xf8) << 2;
                     this.even = true;
@@ -307,7 +339,7 @@ struct Ppu {
             7 => {
                 // PPUDATA: write to location specified by vramAddr
                 this.write(this.vramAddr & 0x3fff, data);
-                if !this.isEnabled() || (this.scanline > 240 && this.scanline < 261) {
+                if !this.enabled || (this.scanline > 240 && this.scanline < 261) {
                     this.vramAddr += this.vramInc;
                 } else {
                     // if 2007 is read during rendering PPU increments both horiz
@@ -340,9 +372,10 @@ struct Ppu {
 
     public function catchUp(nes: Ptr[Nes]) using implicit nes {
         this.stolenCycles += nes.cpu.cycles;
+        nes.cpu.cycles = 0;
 
-        while !this.finished && nes.cpu.cycles > 0 {
-            --nes.cpu.cycles;
+        while !this.finished && this.stolenCycles > 0 {
+            --this.stolenCycles;
             this.clock();
             this.incPixel();
             this.clock();
@@ -351,11 +384,11 @@ struct Ppu {
             this.incPixel();
         }
 
-        this.stolenCycles -= nes.cpu.cycles;
+        this.stolenCycles = 0;
     }
 
     public function clock(nes: Ptr[Nes]) using implicit nes {
-        var enabled = this.isEnabled();
+        var enabled = this.enabled;
 
         if this.suppress {
             nes.cpu.suppressNmi();
@@ -391,8 +424,7 @@ struct Ppu {
                 if this.cycles == 1 {
                     // turn off vblank, sprite 0, sprite overflow flags
                     this.vblank = this.sprite0 = this.spriteOverflow = false;
-                }
-                else if this.cycles >= 280 && this.cycles <= 304 && enabled
+                } else if this.cycles >= 280 && this.cycles <= 304 && enabled
                 {
                     this.vramAddr = this.vramAddrTemp;
                 }
@@ -502,7 +534,7 @@ struct Ppu {
     }
 
     function fetchNTByte(nes: Ptr[Nes]) using implicit nes {
-        this.tileAddr = (this.read(((this.vramAddr & 0xc00) | 0x2000) + (this.vramAddr & 0x3ff)) << 4) + this.bgPatternAddr;
+        this.tileAddr = (this.read(((this.vramAddr & 0xc00) | 0x2000) + (this.vramAddr & 0x3ff)) as Uint16 << 4) + this.bgPatternAddr;
     }
 
     function drawBGPixel(nes: Ptr[Nes], bufferOffset: Uint32): Bool using implicit nes {
@@ -624,7 +656,7 @@ struct Ppu {
         var y: Int = this.found - 1;
         while y >= 0 {
             off = x - this.spriteXlatch[y];
-            if off >= 0 && off <= 8 {
+            if off >= 0 && off < 8 {
                 if (this.spriteShiftRegH[y] & 1) + (this.spriteShiftRegL[y] & 1) != 0 {
                     index = y;
                     sprpxl = 2 * (this.spriteShiftRegH[y] & 1) + (this.spriteShiftRegL[y] & 1);
@@ -634,7 +666,6 @@ struct Ppu {
             }
             --y;
         }
-        this.sprite0 = this.sprite0here;
         if sprpxl == 0 || x < startdraw || !this.sprRender {
             // no opaque sprite pixel here
         } else {
@@ -674,5 +705,13 @@ struct Ppu {
         value = (value & 0x3f) | this.emph;
         // printf("%u %u %.6x\n", offset % 256, offset / 256 as Uint16, Palette.getColor(value) & 0xffffff);
         this.pixels[offset] = Palette.getColor(value);
+    }
+
+    function dma(nes: Ptr[Nes], data: Uint8) using implicit nes {
+        var start: Uint16 = data << 8;
+        for i in 0 ... 0x100 {
+            // shortcut, written to 0x2004
+            this.oam[this.oamAddr++] = nes.read(start + i);
+        }
     }
 }

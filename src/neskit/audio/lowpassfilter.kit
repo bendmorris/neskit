@@ -1,0 +1,50 @@
+import neskit.audio.soundbuffer;
+
+struct LowPassFilter {
+    static function sinc(x:Float): Float {
+        if x == 0 {
+            return 1.0;
+        } else {
+            var xpi = PI * x;
+            return sin(xpi) / xpi;
+        }
+    }
+
+    var buffer: SoundBuffer;
+    var coefficients: CArray[Float, 0x20];
+    var cutoff: Float;
+
+    public static function new(inputSampleRate: Float, outputSampleRate: Float) {
+        var buffer = SoundBuffer.new(0x20);
+        var cutoff = (outputSampleRate / 2) / inputSampleRate;
+        var factor = 2 * cutoff;
+        var halfOrder = 0x10;
+
+        var filter = struct LowPassFilter {
+            buffer,
+            cutoff,
+            coefficients: empty,
+        };
+
+        for i in 0 ... filter.coefficients.length {
+            var c = factor * Self.sinc(factor * (i - halfOrder));
+            // blackman window
+            c *= 0.42 - 0.5 * cos(2 * PI * i / 0x1f) + 0.08 * cos(4 * PI * i / 0x1f);
+            filter.coefficients[i] = c;
+        }
+
+        return filter;
+    }
+
+    public function addSample(sample: Float) {
+        this.buffer.push(sample);
+    }
+
+    public function getSample(): Float {
+        var convolved = 0;
+        for i in 0 ... (fmin(this.coefficients.length, this.buffer.length)) as Uint {
+            convolved += this.buffer[this.buffer.length - i - 1] * this.coefficients[i];
+        }
+        return convolved;
+    }
+}

@@ -1,6 +1,4 @@
-import neskit.addressing;
 import neskit.nes;
-import neskit.opcode;
 
 struct Cpu {
     public var cycles: Size = 0;
@@ -30,6 +28,7 @@ struct Cpu {
 
     var interruptDelay: Bool = false;
     var prevIntFlag: Bool = false;
+    var dmaCounter: Int = 0;
 
     var address: Uint16 = 0;
 
@@ -65,7 +64,7 @@ struct Cpu {
     public function runCycle(nes: Ptr[Nes]) using implicit nes {
         this.ticks = 0;
 
-        if nes.ram.dmaCounter > 0 && --nes.ram.dmaCounter == 0 {
+        if this.dmaCounter > 0 && --this.dmaCounter == 0 {
             // account for CPU cycles from DMA
             this.addTicks(513);
             nes.ppu.catchUp();
@@ -1658,7 +1657,7 @@ struct Cpu {
 
     function read(nes: Ptr[Nes], addr: Uint16): Uint8 using implicit nes {
         this.tick(1);
-        var val = nes.ram.read(addr);
+        var val = nes.read(addr);
         // printf("READ: %.4x = %.2x\n", addr, val);
         return val;
     }
@@ -1674,7 +1673,7 @@ struct Cpu {
     function write(nes: Ptr[Nes], addr: Uint16, val: Uint8) using implicit nes {
         this.tick(1);
         // printf("WRITE: %.4x = %.2x\n", addr, val);
-        nes.ram.write(addr, val);
+        nes.write(addr, val);
     }
 
     function doNmi(nes: Ptr[Nes]) using implicit nes {

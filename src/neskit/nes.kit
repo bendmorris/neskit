@@ -3,23 +3,25 @@ import neskit.controller;
 import neskit.cpu;
 import neskit.mapper;
 import neskit.ppu;
-import neskit.ram;
 import neskit.rom;
 
 struct Nes {
     public var apu: Apu;
     public var cpu: Cpu;
     public var ppu: Ppu;
-    public var ram: Ram;
+    public var ram: CArray[Uint8, 0x800];
     public var rom: Rom;
     public var mapper: Mapper;
     public var controllers: CArray[NesController, 2] = empty;
 
     public static function new() {
         var cpu = Cpu.new();
-        var ram = Ram.new();
         var apu = Apu.new();
         var ppu = Ppu.new();
+        var ram = empty;
+        for i in 0 ... ram.length {
+            ram[i] = 0xff;
+        }
         var nes = struct Nes {
             cpu,
             ram,
@@ -45,11 +47,13 @@ struct Nes {
 
     public function init() using implicit this {
         printf("NES: init\n");
-        this.ram.reset();
-        this.ram.mem[0x0008] = 0xf7;
-        this.ram.mem[0x0009] = 0xef;
-        this.ram.mem[0x000a] = 0xdf;
-        this.ram.mem[0x000f] = 0xbf;
+        for i in 0 ... this.ram.length {
+            this.ram[i] = 0xff;
+        }
+        this.ram[0x0008] = 0xf7;
+        this.ram[0x0009] = 0xef;
+        this.ram[0x000a] = 0xdf;
+        this.ram[0x000f] = 0xbf;
         for i in 0x4000 ...  0x4010 {
             this.apu.write(i - 0x4000, 0);
         }
@@ -65,7 +69,58 @@ struct Nes {
         this.cpu.id = true;
     }
 
-    public function runFrame() using implicit this {
+    public function runFrame(rate: Float) using implicit this {
+        this.apu.startFrame(rate);
         this.cpu.runFrame();
+    }
+
+    public function read(nes: Ptr[Nes], addr: Uint16): Uint8 using implicit nes {
+        if addr < 0x2000 {
+            // RAM
+            return this.ram[addr & 0x7ff];
+        } else if addr > 0x4018 {
+            // cartridge space
+            return nes.mapper.read(addr);
+        } else if addr < 0x4000 {
+            // ppu, mirrored 7 bytes of io registers
+            return nes.ppu.regRead(addr & 7);
+        } else if addr == 0x4016 || addr == 0x4017 {
+            // controller read
+            var port = addr - 0x4016;
+            return if nes.controllers[port].active then nes.controllers[port].pop() else 0;
+        } else if addr >= 0x4000 && addr <= 0x4018 {
+            // APU registers
+            return nes.apu.read(addr);
+        } else {
+            // TODO: bad address
+            return 0;
+        }
+    }
+
+    public function write(nes: Ptr[Nes], addr: Uint16, data: Uint8) using implicit nes {
+        if addr < 0x2000 {
+            // write to RAM (mirrored)
+            this.ram[addr & 0x7ff] = data;
+        } else if addr > 0x4018 {
+            // cartridge space
+            nes.mapper.write(addr, data);
+        } else if addr < 0x4000 {
+            // ppu, mirrored 7 bytes of io registers
+            nes.ppu.regWrite(addr & 7, data);
+        } else if addr == 0x4014 {
+            // sprite DMA
+            this.ppu.dma(data);
+            this.cpu.dmaCounter = 2;
+        } else if addr == 0x4016 {
+            // controller latch
+            if nes.controllers[0].active {
+                nes.controllers[0].latch();
+            }
+            if nes.controllers[1].active {
+                nes.controllers[1].latch();
+            }
+        } else if addr >= 0x4000 && addr <= 0x4018 {
+            nes.apu.write(addr, data);
+        }
     }
 }

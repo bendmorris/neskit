@@ -47,15 +47,13 @@ struct Rom {
                 else H_MIRROR;
 
         rom.hasSram = getbit(f6, 1);
-
-        rom.prgRom = malloc(rom.prgSize * sizeof Uint8);
-
         rom.mapperNumber = (f6 >> 4);// + f7 & 0xF0;
 
         for i in 0 ... 8 {
             fgetc(file);
         }
 
+        rom.prgRom = malloc(rom.prgSize * sizeof Uint8);
         var read = 0;
         var size = rom.prgSize * sizeof Uint8;
         while read < size {

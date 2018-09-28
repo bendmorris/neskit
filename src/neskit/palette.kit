@@ -7,7 +7,7 @@ abstract Palette: Void {
         return Self._colorCache[c];
     }
 
-    public static function init() {
+    public static function _init() {
         // just or's all the colors with opaque alpha and does the color emphasis calcs
         // This set of colors matches current version of ntsc filter output
         var colorarray = [

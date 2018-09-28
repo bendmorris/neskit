@@ -1,0 +1,53 @@
+struct SoundBuffer {
+    public var length: Size = 0;
+    var start: Size = 0;
+    var capacity: Size;
+    var data: Ptr[Float];
+
+    rules {
+        ($this.last) => if $this.length == 0 then 0 else $this.get($this.length - 1);
+        ($this[$i]) => $this.data[($this.start + $i) % $this.capacity];
+        ($this[$i] = $v) => $this.data[($this.start + $i) % $this.capacity] = $v;
+        ($this.clear()) => $this.start = $this.length = 0;
+    }
+
+    public static function new(capacity: Size) {
+        // TODO: make SoundBuffer generic with constant type parameter support
+        return struct SoundBuffer {
+            capacity,
+            data: malloc(capacity * sizeof Float),
+        };
+    }
+
+    public function push(v: Float) {
+        this.data[(this.start + this.length++) % this.capacity] = v;
+    }
+
+    public function pop(): Float {
+        if this.length > 0 {
+            var val = this[0];
+            --this.length;
+            if ++this.start >= this.capacity {
+                this.start -= this.capacity;
+            }
+            return val;
+        } else {
+            return 0;
+        }
+    }
+
+    public function lerp(i: Float): Float {
+        var bottom = i as Uint;
+        var top = (i + 1) as Uint;
+        var t: Float = i - bottom;
+        return (1 - t) * this[bottom] + t * this[top];
+    }
+
+    public function clear() {
+        this.start = this.length = 0;
+    }
+
+    public function dispose() {
+        free(this.data);
+    }
+}

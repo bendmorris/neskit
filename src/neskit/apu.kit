@@ -1,18 +1,287 @@
+import neskit.audio.*;
+import neskit.nes;
+
 struct Apu {
+    public static var lengthCounterTable: CArray[Uint8, 32];
+
+    public static var SAMPLE_RATE: Float = 48000;
+    public static var NATIVE_SAMPLE_RATE = 2680260;
+    public static var SEQUENCER_RATE4 = 14915;
+    public static var SEQUENCER_RATE5 = 18641;
+    public static var BUFFER_LENGTH = 0x1000;
+
+    public static function _init() {
+        Pulse.dutyLookup[0] = [false, true,  false, false, false, false, false, false];
+        Pulse.dutyLookup[1] = [false, true,  true,  false, false, false, false, false];
+        Pulse.dutyLookup[2] = [false, true,  true,  true,  true,  false, false, false];
+        Pulse.dutyLookup[3] = [true,  false, false, true,  true,  true,  true,  true ];
+        Triangle.dutyLookup = [
+            0,  1,  2,  3,  4,  5,  6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+            15, 14, 13, 12, 11, 10, 9, 8, 7, 6,  5,  4,  3,  2,  1,  0,
+        ];
+        Self.lengthCounterTable = [
+            10,254, 20,  2, 40,  4, 80,  6, 160,  8, 60, 10, 14, 12, 26, 14,
+            12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30
+        ];
+    }
+
+    public var playRate: Float = 1;
+
     var ch1: Bool = false;
     var ch2: Bool = false;
     var ch3: Bool = false;
     var ch4: Bool = false;
     var ch5: Bool = false;
 
-    var cycles: Size = 0;
-    var sampleCounter: Size = 0;
+    var pulse1: Pulse;
+    var pulse2: Pulse;
+    var triangle: Triangle;
+    // var noise: Noise;
+    // var dmc: DMC;
+
+    var mode: Bool = false; // true: 5 step, false: 4 step
+
+    var cycles: Int = 0;
+    var sampleCounter: Uint64 = 0;
     var sampleSync: Float = 0;
+    var sampleStepSize: Float = Self.SAMPLE_RATE;
+
+    // sample data for interpolation
+    var s: Float = 0;
+    var sPrev: Float = 0;
+    var t: Float = -1;
+
+    var buffer: SoundBuffer;
+    var filter: LowPassFilter;
 
     public static function new() {
-        return struct Apu {};
+        var pulse1 = Pulse.new();
+        var pulse2 = Pulse.new();
+        pulse2.pulse2 = true;
+        var triangle = Triangle.new();
+        return struct Apu {
+            pulse1,
+            pulse2,
+            triangle,
+            buffer: SoundBuffer.new(0x8000),
+            filter: LowPassFilter.new(
+                Self.NATIVE_SAMPLE_RATE,
+                Self.SAMPLE_RATE
+            ),
+        };
     }
 
-    public function write(addr: Uint32, value: Uint8) {}
-    public function read(addr: Uint32) {}
+    public function read(nes: Ptr[Nes], addr: Uint16): Uint8 using implicit nes {
+        this.catchUp();
+
+        match addr {
+            0x4000 => return this.pulse1.readReg(1);
+            0x4001 => return this.pulse1.readReg(2);
+            0x4002 => return this.pulse1.readReg(3);
+            0x4003 => return this.pulse1.readReg(4);
+            0x4004 => return this.pulse2.readReg(1);
+            0x4005 => return this.pulse2.readReg(2);
+            0x4006 => return this.pulse2.readReg(3);
+            0x4007 => return this.pulse2.readReg(4);
+            0x4008 => return this.triangle.readReg(1);
+            0x4009 => return this.triangle.readReg(2);
+            0x400a => return this.triangle.readReg(3);
+            0x400b => return this.triangle.readReg(4);
+            // 0x400c => return this.noise.readReg(1);
+            // 0x400d => return this.noise.readReg(2);
+            // 0x400e => return this.noise.readReg(3);
+            // 0x400f => return this.noise.readReg(4);
+            0x4010 => return 0;
+            0x4011 => return 0;
+            0x4012 => return 0;
+            0x4013 => return 0;
+
+            0x4015 => return (if this.pulse1.lengthCounter > 0 then 0x1 else 0) |
+                    (if this.pulse2.lengthCounter > 0 then 0x2 else 0) |
+                    (if this.triangle.lengthCounter > 0 then 0x4 else 0) |
+                    // (if this.noise.lengthCounter > 0 then 0x8 else 0) |
+                    // (if this.dmc.lengthCounter > 0 then 0x10 else 0);
+                    0;
+                // TODO: I, F
+            0x4017 => return 0;
+
+            default => return 0;
+        }
+    }
+
+    public function write(nes: Ptr[Nes], addr: Uint16, value: Uint8) using implicit nes {
+        this.catchUp();
+
+        match addr {
+            0x4000 => this.pulse1.writeReg(1, value);
+            0x4001 => this.pulse1.writeReg(2, value);
+            0x4002 => this.pulse1.writeReg(3, value);
+            0x4003 => this.pulse1.writeReg(4, value);
+            0x4004 => this.pulse2.writeReg(1, value);
+            0x4005 => this.pulse2.writeReg(2, value);
+            0x4006 => this.pulse2.writeReg(3, value);
+            0x4007 => this.pulse2.writeReg(4, value);
+            0x4008 => this.triangle.writeReg(1, value);
+            0x4009 => this.triangle.writeReg(2, value);
+            0x400a => this.triangle.writeReg(3, value);
+            0x400b => this.triangle.writeReg(4, value);
+            // 0x400c => this.noise.writeReg(1, value);
+            // 0x400d => this.noise.writeReg(2, value);
+            // 0x400e => this.noise.writeReg(3, value);
+            // 0x400f => this.noise.writeReg(4, value);
+            0x4010 => {}
+            0x4011 => {}
+            0x4012 => {}
+            0x4013 => {}
+
+            0x4015 => {
+                this.ch1 = getbit(value, 0);
+                if !this.ch1 {
+                    this.pulse1.lengthCounter = 0;
+                }
+                this.ch2 = getbit(value, 1);
+                if !this.ch2 {
+                    this.pulse2.lengthCounter = 0;
+                }
+                this.ch3 = getbit(value, 2);
+                if !this.ch3 {
+                    this.triangle.lengthCounter = 0;
+                }
+                this.ch4 = getbit(value, 3);
+                // if !this.ch4 {
+                //     this.noise.lengthCounter = 0;
+                // }
+                this.ch5 = getbit(value, 4);
+                // if !this.ch5 {
+                //     this.dmc.lengthCounter = 0;
+                // }
+            }
+            0x4017 => {}
+            default => {}
+        }
+    }
+
+    public function catchUp(nes: Ptr[Nes]) using implicit nes {
+        while nes.cpu.apuCycles > 1 {
+            var runTo = fmin(this.predict(), floor(nes.cpu.apuCycles/2)) as Uint;
+            nes.cpu.apuCycles -= runTo * 2;
+            for i in 0 ... runTo {
+                this.generateSample();
+                this.generateSample();
+                this.generateSample();
+            }
+            this.subCycles -= runTo * 4;
+            while this.subCycles < 0 {
+                this.runCycle();
+                this.subCycles += if this.mode then Self.SEQUENCER_RATE5 else Self.SEQUENCER_RATE4;
+            }
+        }
+    }
+
+    public function startFrame(rate: Float) {
+        this.playRate = 1 / rate;
+        this.sampleStepSize = Self.SAMPLE_RATE * this.playRate;
+    }
+
+    function predict() {
+        return fmax(this.subCycles, 1) as Uint;
+    }
+
+    var subCycles:Int = 0;
+    function runCycle() {
+        if this.mode {
+            // 5 step
+            match this.cycles++ {
+                0 => {
+                    this.lengthClock();
+                    this.envelopeClock();
+                }
+                1 => {
+                    this.envelopeClock();
+                }
+                2 => {
+                    this.lengthClock();
+                    this.envelopeClock();
+                }
+                3 => {
+                    this.envelopeClock();
+                }
+                4 => {}
+            }
+            this.cycles %= 5;
+        } else {
+            match this.cycles++ {
+                0 => {
+                    this.envelopeClock();
+                }
+                1 => {
+                    this.lengthClock();
+                    this.envelopeClock();
+                }
+                2 => {
+                    this.envelopeClock();
+                }
+                3 => {
+                    this.lengthClock();
+                    this.envelopeClock();
+                    //irq();
+                }
+            }
+            this.cycles %= 4;
+        }
+    }
+
+    function lengthClock() {
+        this.pulse1.lengthClock();
+        this.pulse2.lengthClock();
+        this.triangle.lengthClock();
+        // this.noise.lengthClock();
+        // //this.dmc.lengthClock();
+    }
+
+    function envelopeClock() {
+        this.pulse1.envelopeClock();
+        this.pulse2.envelopeClock();
+        this.triangle.envelopeClock();
+        // this.noise.envelopeClock();
+        // //this.dmc.envelopeClock();
+    }
+
+    function generateSample() {
+        this.sampleSync += this.sampleStepSize;
+
+        this.getSoundOut();
+        this.filter.addSample(this.s);
+
+        if Self.NATIVE_SAMPLE_RATE - this.sampleSync < this.sampleStepSize {
+            if this.t < 0 {
+                this.sPrev = this.filter.getSample();
+                this.t = (Self.NATIVE_SAMPLE_RATE - this.sampleSync) / this.sampleStepSize;
+            } else {
+                if this.buffer.length < this.buffer.capacity {
+                    this.buffer.push(lerp(this.sPrev, this.filter.getSample(), this.t));
+                }
+
+                this.sampleSync -= Self.NATIVE_SAMPLE_RATE;
+                this.t = -1;
+            }
+        }
+    }
+
+    function getSoundOut() {
+        var p1: Float = if this.ch1 then this.pulse1.play(this.playRate) else 0;
+        var p2: Float = if this.ch2 then this.pulse2.play(this.playRate) else 0;
+        var s2: Float = 0;
+        var s3: Float = 0;
+        var s1 = if this.ch3 then this.triangle.play(this.playRate) else 0;
+        // var s2 = if this.ch4 then this.noise.play(this.playRate) else 0;
+        // var s3 = if this.ch5 then 0 else 0;//this.dmc.play();
+        this.s = 0;
+        if p1 + p2 != 0 {
+            this.s += 95.88 / ((8128 / (p1 + p2)) + 100);
+        }
+        if s1 + s2 + s3 != 0 {
+            this.s += 159.79 / ((1 / (s1/8227 + s2/12241 + s3/22638)) + 100);
+        }
+    }
 }
