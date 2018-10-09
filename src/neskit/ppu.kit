@@ -707,7 +707,7 @@ struct Ppu {
         this.pixels[offset] = Palette.getColor(value);
     }
 
-    function dma(nes: Ptr[Nes], data: Uint8) using implicit nes {
+    public function dma(nes: Ptr[Nes], data: Uint8) using implicit nes {
         var start: Uint16 = data << 8;
         for i in 0 ... 0x100 {
             // shortcut, written to 0x2004

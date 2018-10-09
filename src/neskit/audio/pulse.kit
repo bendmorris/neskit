@@ -1,7 +1,7 @@
 import neskit.apu;
 
 struct Pulse {
-    static var dutyLookup: CArray[CArray[Bool, 8], 4];
+    public static var dutyLookup: CArray[CArray[Bool, 8], 4];
 
     var sweepEnabled: Bool = false;
     var sweepPeriod: Int = 0;
