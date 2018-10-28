@@ -1,5 +1,4 @@
 import neskit.audio.*;
-import neskit.nes;
 
 struct Apu {
     public static var lengthCounterTable: CArray[Uint8, 32];
@@ -51,7 +50,7 @@ struct Apu {
     var sPrev: Float = 0;
     var t: Float = -1;
 
-    var buffer: SoundBuffer;
+    var buffer: SoundBuffer[0x8000];
     var filter: LowPassFilter;
 
     public static function new() {
@@ -63,7 +62,7 @@ struct Apu {
             pulse1,
             pulse2,
             triangle,
-            buffer: SoundBuffer.new(0x8000),
+            buffer: SoundBuffer[0x8000].new(),
             filter: LowPassFilter.new(
                 Self.NATIVE_SAMPLE_RATE,
                 Self.SAMPLE_RATE

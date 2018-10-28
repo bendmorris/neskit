@@ -1,5 +1,4 @@
 import neskit.mirror;
-import neskit.nes;
 import neskit.palette;
 
 struct Ppu {
@@ -25,18 +24,20 @@ struct Ppu {
         return ppu;
     }
 
-    public var frameCount: Int = 1;
-    public var stolenCycles: Int = 0;
-    public var finished: Bool = false;
+    public {
+        var frameCount: Int = 1;
+        var stolenCycles: Int = 0;
+        var finished: Bool = false;
 
-    public var oam: CArray[Uint8, 0x100] = empty;
-    public var pal: CArray[Uint8, 0x20] = empty;
-    public var nametables: CArray[Uint8, 0x1000] = empty;
+        const oam: CArray[Uint8, 0x100] = empty;
+        const pal: CArray[Uint8, 0x20] = empty;
+        const nametables: CArray[Uint8, 0x1000] = empty;
 
-    public var scanline: Int = 0;
-    public var cycles: Int = 1;
+        var scanline: Int = 0;
+        var cycles: Int = 1;
 
-    public var pixels: CArray[Uint32, 61440] = empty;
+        const pixels: CArray[Uint32, 61440] = empty;
+    }
 
     var vramAddr: Uint16 = 0;
     var vramAddrTemp: Uint16 = 0;

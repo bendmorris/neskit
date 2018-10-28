@@ -1,7 +1,5 @@
 import neskit.mapper;
 import neskit.mirror;
-import neskit.nes;
-import neskit.utils;
 
 struct Rom {
     public var mirror: MirrorMode = H_MIRROR;
@@ -30,12 +28,12 @@ struct Rom {
             return Error("not in iNES format");
         }
         rom.prgSize = (fgetc(file) as Uint8) * 0x4000;
-        printf("PRG size: 0x%x\n", rom.prgSize);
+        printf("PRG size: 0x%x\n", rom.prgSize as Uint16);
         if (rom.prgSize == 0) {
             return Error("no PRG ROM size in header");
         }
         rom.chrSize = (fgetc(file) as Uint8) * 0x2000;
-        printf("CHR size: 0x%x\n", rom.chrSize);
+        printf("CHR size: 0x%x\n", rom.chrSize as Uint16);
         var f6 = fgetc(file);
         var f7 = fgetc(file);
 

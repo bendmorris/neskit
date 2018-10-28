@@ -1,34 +1,30 @@
-struct SoundBuffer {
+struct SoundBuffer[$N] {
     public var length: Size = 0;
     var start: Size = 0;
-    var capacity: Size;
-    var data: Ptr[Float];
+    var data: CArray[Float, N] = empty;
 
     rules {
+        ($this.capacity) => N;
         ($this.last) => if $this.length == 0 then 0 else $this.get($this.length - 1);
-        ($this[$i]) => $this.data[($this.start + $i) % $this.capacity];
-        ($this[$i] = $v) => $this.data[($this.start + $i) % $this.capacity] = $v;
+        ($this[$i]) => $this.data[($this.start + $i) % N];
+        ($this[$i] = $v) => $this.data[($this.start + $i) % N] = $v;
         ($this.clear()) => $this.start = $this.length = 0;
     }
 
-    public static function new(capacity: Size) {
-        // TODO: make SoundBuffer generic with constant type parameter support
-        return struct SoundBuffer {
-            capacity,
-            data: malloc(capacity * sizeof Float),
-        };
+    public static function new() {
+        return struct SoundBuffer;
     }
 
     public function push(v: Float) {
-        this.data[(this.start + this.length++) % this.capacity] = v;
+        this.data[(this.start + this.length++) % N] = v;
     }
 
     public function pop(): Float {
         if this.length > 0 {
             var val = this[0];
             --this.length;
-            if ++this.start >= this.capacity {
-                this.start -= this.capacity;
+            if ++this.start >= N {
+                this.start -= N;
             }
             return val;
         } else {
@@ -45,9 +41,5 @@ struct SoundBuffer {
 
     public function clear() {
         this.start = this.length = 0;
-    }
-
-    public function dispose() {
-        free(this.data);
     }
 }

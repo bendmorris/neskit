@@ -10,12 +10,12 @@ struct LowPassFilter {
         }
     }
 
-    var buffer: SoundBuffer;
+    var buffer: SoundBuffer[0x20];
     var coefficients: CArray[Float, 0x20];
     var cutoff: Float;
 
     public static function new(inputSampleRate: Float, outputSampleRate: Float) {
-        var buffer = SoundBuffer.new(0x20);
+        var buffer = empty;//SoundBuffer.new();
         var cutoff = (outputSampleRate / 2) / inputSampleRate;
         var factor = 2 * cutoff;
         var halfOrder = 0x10;

@@ -93,7 +93,7 @@ function main(argc: Int, argv: CArray[CString]) {
         if nes.apu.buffer.length > 0 {
             var queued = SDL_GetQueuedAudioSize(audioDevice);
             if queued < 0x4000 {
-                SDL_QueueAudio(audioDevice, nes.apu.buffer.data as Ptr[Uint8], nes.apu.buffer.length * sizeof Float);
+                SDL_QueueAudio(audioDevice, &nes.apu.buffer.data as Ptr[Void] as Ptr[Uint8], nes.apu.buffer.length * sizeof Float);
             }
             nes.apu.buffer.clear();
         }
@@ -112,20 +112,28 @@ function main(argc: Int, argv: CArray[CString]) {
             }
         }
 
-        var elapsed: Double;
-        // printf("frame elapsed time ms: %f\n", elapsed);
-        do {
-            elapsed = time() - lastStart;
-            if frameTime - elapsed > 0.01 {
-                sleep(frameTime - elapsed);
-            }
-        } while elapsed < frameTime;
+        if running {
+            var elapsed: Double;
+            // printf("frame elapsed time ms: %f\n", elapsed);
+            do {
+                elapsed = time() - lastStart;
+                if frameTime - elapsed > 0.01 {
+                    sleep(frameTime - elapsed);
+                }
+            } while elapsed < frameTime;
+        }
     }
 
+    printf("ended main loop\n");
+
     SDL_CloseAudioDevice(audioDevice);
+    printf("closed audio device\n");
     SDL_DestroyTexture(texture);
+    printf("destroyed texture\n");
     SDL_DestroyRenderer(renderer);
+    printf("destroyed renderer\n");
     SDL_DestroyWindow(window);
+    printf("destroyed window\n");
     SDL_Quit();
 
     printf("bye!\n");
@@ -144,11 +152,11 @@ function keyBinding(id: Uint8) {
     }
 }
 
-function fillSoundBuffer(_apu: Ptr[Void], out: Ptr[Uint8], count: Int) {
+/*function fillSoundBuffer(_apu: Ptr[Void], out: Ptr[Uint8], count: Int) {
     var apu: Ptr[Apu] = _apu;
     var floats: Ptr[Float] = out;
     for i in 0 ... count / (sizeof Float) {
         var sample = apu.buffer.pop();
         floats[i] = sample;
     }
-}
+}*/
