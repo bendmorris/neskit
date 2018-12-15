@@ -1,28 +1,16 @@
 import neskit.audio.*;
 
 struct Apu {
-    public static var lengthCounterTable: CArray[Uint8, 32];
+    public static var lengthCounterTable: CArray[Uint8, 32] = [
+        10,254, 20,  2, 40,  4, 80,  6, 160,  8, 60, 10, 14, 12, 26, 14,
+        12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30
+    ];
 
     public static var SAMPLE_RATE = 48000;
     public static var NATIVE_SAMPLE_RATE = 2680260;
     public static var SEQUENCER_RATE4 = 14915;
     public static var SEQUENCER_RATE5 = 18641;
     public static var BUFFER_LENGTH = 0x1000;
-
-    public static function _init() {
-        Pulse.dutyLookup[0] = [false, true,  false, false, false, false, false, false];
-        Pulse.dutyLookup[1] = [false, true,  true,  false, false, false, false, false];
-        Pulse.dutyLookup[2] = [false, true,  true,  true,  true,  false, false, false];
-        Pulse.dutyLookup[3] = [true,  false, false, true,  true,  true,  true,  true ];
-        Triangle.dutyLookup = [
-            0,  1,  2,  3,  4,  5,  6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-            15, 14, 13, 12, 11, 10, 9, 8, 7, 6,  5,  4,  3,  2,  1,  0,
-        ];
-        Self.lengthCounterTable = [
-            10,254, 20,  2, 40,  4, 80,  6, 160,  8, 60, 10, 14, 12, 26, 14,
-            12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30
-        ];
-    }
 
     public var playRate: Float = 1;
 
